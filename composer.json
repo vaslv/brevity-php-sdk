@@ -1,0 +1,39 @@
+{
+    "name": "vaslv/brevity-php-sdk",
+    "description": "PHP SDK for Brevity short links API",
+    "type": "library",
+    "license": "MIT",
+    "version": "1.0.0",
+    "require": {
+        "php": ">=7.1",
+        "ext-json": "*",
+        "guzzlehttp/guzzle": "^6.5 || ^7.0"
+    },
+    "require-dev": {
+        "illuminate/support": "^5.8 || ^6.0 || ^7.0 || ^8.0 || ^9.0 || ^10.0 || ^11.0 || ^12.0 || ^13.0",
+        "laravel/pint": "^1.0",
+        "phpunit/phpunit": "^7.5 || ^8.5 || ^9.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "Vaslv\\Brevity\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Vaslv\\Brevity\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Vaslv\\Brevity\\Laravel\\BrevityServiceProvider"
+            ],
+            "aliases": {
+                "Brevity": "Vaslv\\Brevity\\Laravel\\BrevityFacade"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
