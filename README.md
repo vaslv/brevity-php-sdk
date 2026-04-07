@@ -5,6 +5,7 @@ PHP SDK for the Brevity short links API.
 ## Features
 
 - Create short links via `POST /api/links`
+- Create a simple short link with a single target URL via `createSimpleLink()`
 - Request/response DTOs
 - Typed exceptions:
 - `AuthenticationException` (401)
@@ -20,6 +21,29 @@ composer require vaslv/brevity-php-sdk
 ```
 
 ## Quick Start (Plain PHP)
+
+Simple case without conditions:
+
+```php
+<?php
+
+use Vaslv\Brevity\BrevityClient;
+
+$client = new BrevityClient([
+    'base_uri' => 'https://your-host',
+    'token' => 'your-sanctum-token',
+]);
+
+$response = $client->createSimpleLink(
+    'https://example.com/landing',
+    'short.example.com',
+    'Campaign link',
+    true,
+    ['campaign_id' => 'cmp-42']
+);
+```
+
+Full request with explicit rules:
 
 ```php
 <?php
@@ -85,18 +109,7 @@ Usage:
 ```php
 <?php
 
-use Vaslv\Brevity\DTO\CreateLinkRequest;
-use Vaslv\Brevity\DTO\CreateLinkRule;
-
-$response = \Brevity::createLink(
-    new CreateLinkRequest(
-        null,
-        'My Link',
-        null,
-        null,
-        [new CreateLinkRule('https://example.com')]
-    )
-);
+$response = \Brevity::createSimpleLink('https://example.com', null, 'My Link');
 ```
 
 ---
@@ -108,6 +121,7 @@ PHP SDK для API сервиса коротких ссылок Brevity.
 ## Возможности
 
 - Создание короткой ссылки через `POST /api/links`
+- Создание простой короткой ссылки с одним URL через `createSimpleLink()`
 - DTO для request/response
 - Типизированные исключения:
 - `AuthenticationException` (401)
@@ -123,6 +137,29 @@ composer require vaslv/brevity-php-sdk
 ```
 
 ## Быстрый старт (чистый PHP)
+
+Простой случай без условий:
+
+```php
+<?php
+
+use Vaslv\Brevity\BrevityClient;
+
+$client = new BrevityClient([
+    'base_uri' => 'https://your-host',
+    'token' => 'your-sanctum-token',
+]);
+
+$response = $client->createSimpleLink(
+    'https://example.com/landing',
+    'short.example.com',
+    'Campaign link',
+    true,
+    ['campaign_id' => 'cmp-42']
+);
+```
+
+Полный запрос с явными правилами:
 
 ```php
 <?php
@@ -188,16 +225,5 @@ BREVITY_RETRIES=1
 ```php
 <?php
 
-use Vaslv\Brevity\DTO\CreateLinkRequest;
-use Vaslv\Brevity\DTO\CreateLinkRule;
-
-$response = \Brevity::createLink(
-    new CreateLinkRequest(
-        null,
-        'My Link',
-        null,
-        null,
-        [new CreateLinkRule('https://example.com')]
-    )
-);
+$response = \Brevity::createSimpleLink('https://example.com', null, 'My Link');
 ```

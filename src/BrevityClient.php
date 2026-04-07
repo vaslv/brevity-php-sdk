@@ -10,6 +10,7 @@ use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Exception\RequestException;
 use Vaslv\Brevity\DTO\CreateLinkRequest;
 use Vaslv\Brevity\DTO\CreateLinkResponse;
+use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
 use Vaslv\Brevity\Exceptions\TransportException;
@@ -41,6 +42,31 @@ class BrevityClient
                 'connect_timeout' => isset($config['connect_timeout']) ? (float) $config['connect_timeout'] : 5.0,
             ]
         );
+    }
+
+    /**
+     * @throws ApiException
+     * @throws AuthenticationException
+     * @throws TransportException
+     * @throws ValidationException
+     */
+    public function createSimpleLink(
+        string $url,
+        ?string $domain = null,
+        ?string $title = null,
+        ?bool $forwardQuery = null,
+        ?array $callbackData = null,
+        ?string $transitionMode = null
+    ): CreateLinkResponse {
+        return $this->createLink(new CreateLinkRequest(
+            $domain,
+            $title,
+            $forwardQuery,
+            $callbackData,
+            [
+                new CreateLinkRule($url, null, $transitionMode),
+            ]
+        ));
     }
 
     /**

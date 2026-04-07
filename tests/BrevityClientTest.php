@@ -22,6 +22,63 @@ use Vaslv\Brevity\Exceptions\ValidationException;
 
 class BrevityClientTest extends TestCase
 {
+    public function test_create_simple_link_success(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(201, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/S1mple42',
+                        'domain' => 'short.example.com',
+                        'code' => 'S1mple42',
+                        'title' => 'Single target',
+                        'forward_query' => true,
+                        'callback_data' => ['source' => 'sdk'],
+                        'rules' => [
+                            [
+                                'url' => 'https://example.com/landing',
+                                'transition_mode' => 'direct',
+                            ],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+
+        $client = new BrevityClient(
+            [
+                'base_uri' => 'https://api.example.com',
+                'token' => 'test-token',
+                'retries' => 0,
+            ],
+            $httpClient
+        );
+
+        $response = $client->createSimpleLink(
+            'https://example.com/landing',
+            'short.example.com',
+            'Single target',
+            true,
+            ['source' => 'sdk'],
+            'direct'
+        );
+
+        $this->assertSame('S1mple42', $response->getCode());
+        $this->assertCount(1, $response->getRules());
+
+        $body = json_decode((string) $container[0]['request']->getBody(), true);
+        $this->assertSame('short.example.com', $body['domain']);
+        $this->assertSame('https://example.com/landing', $body['rules'][0]['url']);
+        $this->assertArrayNotHasKey('condition', $body['rules'][0]);
+        $this->assertSame('direct', $body['rules'][0]['transition_mode']);
+    }
+
     public function test_create_link_success(): void
     {
         $container = [];
