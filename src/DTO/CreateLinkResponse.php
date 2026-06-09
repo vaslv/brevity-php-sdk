@@ -9,7 +9,7 @@ class CreateLinkResponse
     /** @var string */
     private $url;
 
-    /** @var string */
+    /** @var string|null */
     private $domain;
 
     /** @var string */
@@ -32,7 +32,7 @@ class CreateLinkResponse
      */
     public function __construct(
         string $url,
-        string $domain,
+        ?string $domain,
         string $code,
         ?string $title,
         ?bool $forwardQuery,
@@ -53,7 +53,7 @@ class CreateLinkResponse
         return $this->url;
     }
 
-    public function getDomain(): string
+    public function getDomain(): ?string
     {
         return $this->domain;
     }
@@ -101,7 +101,7 @@ class CreateLinkResponse
 
         return new self(
             (string) $payload['url'],
-            (string) $payload['domain'],
+            isset($payload['domain']) ? (string) $payload['domain'] : null,
             (string) $payload['code'],
             isset($payload['title']) ? (string) $payload['title'] : null,
             isset($payload['forward_query']) ? (bool) $payload['forward_query'] : null,

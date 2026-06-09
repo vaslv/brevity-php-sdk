@@ -13,6 +13,7 @@ use Vaslv\Brevity\DTO\CreateLinkResponse;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
+use Vaslv\Brevity\Exceptions\RateLimitException;
 use Vaslv\Brevity\Exceptions\TransportException;
 use Vaslv\Brevity\Exceptions\ValidationException;
 
@@ -45,10 +46,17 @@ class BrevityClient
     }
 
     /**
-     * @throws ApiException
-     * @throws AuthenticationException
-     * @throws TransportException
-     * @throws ValidationException
+     * Create a short link with a single target URL and no condition.
+     *
+     * Convenience wrapper around {@see createLink()} for the common one-rule case.
+     *
+     * @param  array<string, mixed>|null  $callbackData
+     *
+     * @throws ApiException             Other 4xx/5xx responses.
+     * @throws AuthenticationException  HTTP 401 (missing/invalid token).
+     * @throws RateLimitException       HTTP 429 (rate limit exceeded).
+     * @throws TransportException       Network/timeout failure.
+     * @throws ValidationException      HTTP 422 (validation error).
      */
     public function createSimpleLink(
         string $url,
@@ -70,10 +78,16 @@ class BrevityClient
     }
 
     /**
-     * @throws ApiException
-     * @throws AuthenticationException
-     * @throws TransportException
-     * @throws ValidationException
+     * Create a short link and its transition rules via `POST /api/links`.
+     *
+     * Network failures and 5xx responses are retried up to the configured
+     * `retries` count; 4xx responses are surfaced immediately as typed exceptions.
+     *
+     * @throws ApiException             Other 4xx/5xx responses.
+     * @throws AuthenticationException  HTTP 401 (missing/invalid token).
+     * @throws RateLimitException       HTTP 429 (rate limit exceeded).
+     * @throws TransportException       Network/timeout failure (retries exhausted).
+     * @throws ValidationException      HTTP 422 (validation error).
      */
     public function createLink(CreateLinkRequest $request): CreateLinkResponse
     {
@@ -142,6 +156,15 @@ class BrevityClient
                     );
                 }
 
+                if ($statusCode === 429) {
+                    throw new RateLimitException(
+                        $this->extractMessage($payload, 'Rate limit exceeded.'),
+                        $statusCode,
+                        $payload,
+                        $this->parseRetryAfter($response->getHeaderLine('Retry-After'))
+                    );
+                }
+
                 throw new ApiException(
                     $this->extractMessage($payload, 'API request failed.'),
                     $statusCode,
@@ -187,6 +210,18 @@ class BrevityClient
         }
 
         return $decoded;
+    }
+
+    /**
+     * Parse the `Retry-After` header (delta-seconds form) into an int, or null when absent/non-numeric.
+     */
+    private function parseRetryAfter(string $header): ?int
+    {
+        if ($header !== '' && is_numeric($header)) {
+            return (int) $header;
+        }
+
+        return null;
     }
 
     /**

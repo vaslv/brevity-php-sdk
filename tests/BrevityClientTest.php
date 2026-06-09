@@ -17,6 +17,7 @@ use Vaslv\Brevity\DTO\CreateLinkCondition;
 use Vaslv\Brevity\DTO\CreateLinkRequest;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
+use Vaslv\Brevity\Exceptions\RateLimitException;
 use Vaslv\Brevity\Exceptions\TransportException;
 use Vaslv\Brevity\Exceptions\ValidationException;
 
@@ -188,6 +189,53 @@ class BrevityClientTest extends TestCase
             $errors = $exception->getErrors();
             $this->assertArrayHasKey('rules.0.condition.data.before', $errors);
         }
+    }
+
+    public function test_create_link_throws_rate_limit_exception_with_retry_after(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(429, ['Retry-After' => '30'], json_encode(['message' => 'Too Many Requests'])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('RateLimitException was expected.');
+        } catch (RateLimitException $exception) {
+            $this->assertSame(429, $exception->getStatusCode());
+            $this->assertSame(30, $exception->getRetryAfter());
+        }
+    }
+
+    public function test_create_link_returns_null_domain_when_response_domain_is_null(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(201, [], json_encode([
+                    'data' => [
+                        'url' => 'https://app.example.com/NoD0main',
+                        'domain' => null,
+                        'code' => 'NoD0main',
+                        'title' => null,
+                        'forward_query' => false,
+                        'callback_data' => null,
+                        'rules' => [
+                            ['url' => 'https://example.com/landing', 'condition' => null, 'transition_mode' => null],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $response = $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com/landing')]));
+
+        $this->assertNull($response->getDomain());
+        $this->assertSame('NoD0main', $response->getCode());
     }
 
     public function test_create_link_retries_and_throws_transport_exception(): void
