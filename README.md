@@ -19,6 +19,7 @@ outgoing click callbacks, from plain PHP or Laravel.
 - [Laravel integration](#laravel-integration)
 - [Conditions](#conditions)
 - [Transition modes](#transition-modes)
+- [Domains](#domains)
 - [Error handling](#error-handling)
 - [Rate limiting, retries & timeouts](#rate-limiting-retries--timeouts)
 - [API reference](#api-reference)
@@ -31,6 +32,10 @@ outgoing click callbacks, from plain PHP or Laravel.
 
 - Create a short link via `POST /api/links` with one call.
 - One-liner helper `createSimpleLink()` for the common single-URL case.
+- Automatic domain selection by strategy (`random` / `round_robin` / `coldest`),
+  optionally scoped to a domain group.
+- Browse the domain registry via `listDomains()` / `listDomainGroups()`.
+- Fail-fast client-side validation of contradictory domain options (no wasted round-trip).
 - Strongly-typed request/response DTOs (no associative-array guessing).
 - Typed exceptions for every documented HTTP outcome:
   - `AuthenticationException` (401)
@@ -234,6 +239,76 @@ How the server responds to a visitor when a rule matches:
 
 When omitted, the response field is `null`, which is equivalent to `direct`.
 
+## Domains
+
+The server resolves a link's domain in this order: an explicit `domain` →
+a `domain_strategy` → the registry's default domain → no domain (resolved via
+`APP_URL`). An explicit `domain` and a `domain_strategy` are **mutually
+exclusive**.
+
+### Auto-pick by strategy
+
+To get a link on a non-default domain without naming one, pass a strategy. The
+pool is the whole registry, or a single group when `domainGroup` (a group code)
+is given.
+
+| Strategy | Picks |
+|---|---|
+| `random` | A random domain from the pool. |
+| `round_robin` | The least-recently-used domain — each new link gets the next one. |
+| `coldest` | The "coldest" domain — fewest links over the last 30 days. |
+
+```php
+use Vaslv\Brevity\DTO\CreateLinkRequest;
+use Vaslv\Brevity\DTO\CreateLinkRule;
+
+// Full request: 6th/7th constructor args are $domainStrategy and $domainGroup.
+$request = new CreateLinkRequest(
+    null,                                       // domain — must stay null with a strategy
+    null, null, null,                           // title, forward_query, callback_data
+    [new CreateLinkRule('https://example.com/landing')],
+    'round_robin',                              // domain_strategy
+    'campaigns'                                 // domain_group — group code (optional)
+);
+$response = $client->createLink($request);
+
+// One-liner: domainStrategy / domainGroup are the 7th/8th arguments.
+$response = $client->createSimpleLink(
+    'https://example.com/landing',
+    null, null, null, null, null,               // domain, title, forward_query, callback_data, transition_mode
+    'random'                                     // domain_strategy
+);
+
+echo $response->getDomain(); // the auto-picked host
+```
+
+Contradictory domain options are rejected **client-side** before any request,
+as an `InvalidRequestException`: an explicit `domain` together with a
+`domainStrategy`, or a `domainGroup` without a `domainStrategy`. An empty pool
+(no domains, or an empty group) is still reported by the server as a
+`ValidationException` (422).
+
+### Browsing the registry
+
+Pick a domain or group up front with two read-only endpoints:
+
+```php
+foreach ($client->listDomainGroups() as $group) {
+    echo $group->getCode().' '.$group->getName().' ('.$group->getDomainsCount().")\n";
+}
+
+// All domains, or only those in a group (by code).
+$domains = $client->listDomains();
+$inGroup = $client->listDomains('campaigns');
+
+foreach ($domains as $domain) {
+    echo $domain->getDomain().($domain->isDefault() ? ' (default)' : '')."\n";
+}
+```
+
+Both endpoints use a **separate** rate-limit bucket from link creation, so
+browsing the registry never eats into your link-creation budget.
+
 ## Error handling
 
 Every documented HTTP outcome maps to a typed exception. Because the specific
@@ -252,11 +327,12 @@ try {
     foreach ($e->getErrors() as $field => $messages) {
         // $field => string[] of messages
     }
-} catch (AuthenticationException $e) {           // 401
-    // missing / invalid token, or token lacks links:create
+} catch (AuthenticationException $e) {           // 401 — missing / invalid token
+    // re-issue or fix the token
 } catch (RateLimitException $e) {                // 429
     $waitSeconds = $e->getRetryAfter();          // int|null
-} catch (ApiException $e) {                       // other 4xx/5xx
+} catch (ApiException $e) {                       // other 4xx/5xx (incl. 403)
+    // 403 = token present but lacks the links:create ability ($e->getStatusCode() === 403)
     $status = $e->getStatusCode();
     $body   = $e->getResponseBody();             // decoded JSON, array|null
 } catch (TransportException $e) {                 // network / timeout
@@ -271,6 +347,12 @@ try {
 | `RateLimitException` | 429 | `getRetryAfter(): ?int` |
 | `ApiException` | other 4xx/5xx | `getStatusCode(): int`, `getResponseBody(): ?array` |
 | `TransportException` | — (network/timeout) | standard `Throwable` |
+| `InvalidRequestException` | — (client-side, pre-request) | a `\InvalidArgumentException` thrown when domain options contradict each other |
+
+`InvalidRequestException` is raised while **building** a `CreateLinkRequest`
+(or by `createSimpleLink()`), before any HTTP call — see [Domains](#domains).
+It extends `\InvalidArgumentException`, not `ApiException`, so it is not caught
+by the `ApiException` arm above.
 
 ## Rate limiting, retries & timeouts
 
@@ -288,12 +370,14 @@ try {
 | Method | Signature |
 |---|---|
 | `__construct` | `(array $config, ?ClientInterface $httpClient = null)` |
-| `createSimpleLink` | `(string $url, ?string $domain = null, ?string $title = null, ?bool $forwardQuery = null, ?array $callbackData = null, ?string $transitionMode = null): CreateLinkResponse` |
+| `createSimpleLink` | `(string $url, ?string $domain = null, ?string $title = null, ?bool $forwardQuery = null, ?array $callbackData = null, ?string $transitionMode = null, ?string $domainStrategy = null, ?string $domainGroup = null): CreateLinkResponse` |
 | `createLink` | `(CreateLinkRequest $request): CreateLinkResponse` |
+| `listDomains` | `(?string $group = null): Domain[]` |
+| `listDomainGroups` | `(): DomainGroup[]` |
 
 ### Request DTOs
 
-**`CreateLinkRequest`** — `__construct(?string $domain, ?string $title, ?bool $forwardQuery, ?array $callbackData, CreateLinkRule[] $rules)`
+**`CreateLinkRequest`** — `__construct(?string $domain, ?string $title, ?bool $forwardQuery, ?array $callbackData, CreateLinkRule[] $rules, ?string $domainStrategy = null, ?string $domainGroup = null)`
 
 | Getter | Returns | Maps to |
 |---|---|---|
@@ -302,6 +386,8 @@ try {
 | `getForwardQuery()` | `?bool` | `forward_query` |
 | `getCallbackData()` | `?array` | `callback_data` |
 | `getRules()` | `CreateLinkRule[]` | `rules` |
+| `getDomainStrategy()` | `?string` | `domain_strategy` |
+| `getDomainGroup()` | `?string` | `domain_group` |
 | `toArray()` | `array` | full JSON body (omits `null` optional fields) |
 
 **`CreateLinkRule`** — `__construct(string $url, ?CreateLinkCondition $condition = null, ?string $transitionMode = null)`
@@ -341,8 +427,24 @@ try {
 | `getCondition()` | `?CreateLinkCondition` |
 | `getTransitionMode()` | `?string` |
 
+**`Domain`** — element of `listDomains()`.
+
+| Getter | Returns | Maps to |
+|---|---|---|
+| `getDomain()` | `string` | `domain` (the host) |
+| `getUrl()` | `string` | `url` (host as an `https://` address) |
+| `isDefault()` | `bool` | `is_default` |
+
+**`DomainGroup`** — element of `listDomainGroups()`.
+
+| Getter | Returns | Maps to |
+|---|---|---|
+| `getCode()` | `string` | `code` (use as `group` / `domainGroup`) |
+| `getName()` | `string` | `name` |
+| `getDomainsCount()` | `int` | `domains_count` |
+
 The full request/response field contract, validation rules and ready-to-use
-test payloads live in [API.md](./API.md) (see Appendices A & B).
+test payloads live in [API.md](./API.md).
 
 ## Testing
 
@@ -375,6 +477,7 @@ PHP SDK для API сервиса коротких ссылок **Brevity** — 
 - [Интеграция с Laravel](#интеграция-с-laravel)
 - [Условия](#условия)
 - [Режимы перехода](#режимы-перехода)
+- [Домены](#домены)
 - [Обработка ошибок](#обработка-ошибок)
 - [Лимиты, ретраи и таймауты](#лимиты-ретраи-и-таймауты)
 - [Справочник API](#справочник-api)
@@ -385,6 +488,10 @@ PHP SDK для API сервиса коротких ссылок **Brevity** — 
 
 - Создание короткой ссылки через `POST /api/links` за один вызов.
 - Хелпер `createSimpleLink()` для частого случая «одна ссылка — один URL».
+- Автоподбор домена по стратегии (`random` / `round_robin` / `coldest`),
+  опционально в пределах группы доменов.
+- Просмотр справочника доменов через `listDomains()` / `listDomainGroups()`.
+- Проверка противоречивых опций домена на клиенте — без лишнего запроса к серверу.
 - Строго типизированные DTO запроса/ответа (никаких ассоциативных массивов наугад).
 - Типизированные исключения для каждого документированного HTTP-исхода:
   - `AuthenticationException` (401)
@@ -588,6 +695,74 @@ new CreateLinkCondition('time_before', ['before' => '2026-03-05T10:00:00+00:00']
 
 Если не передан, в ответе поле `null`, что эквивалентно `direct`.
 
+## Домены
+
+Сервер определяет домен ссылки в таком порядке: явный `domain` →
+`domain_strategy` → домен «по умолчанию» из справочника → без домена (резолв
+через `APP_URL`). Явный `domain` и `domain_strategy` — **взаимоисключимы**.
+
+### Автоподбор по стратегии
+
+Чтобы получить ссылку на домене не по умолчанию, не называя конкретный,
+передайте стратегию. Пул — весь справочник либо одна группа, если задан
+`domainGroup` (код группы).
+
+| Стратегия | Как выбирает |
+|---|---|
+| `random` | Случайный домен из пула. |
+| `round_robin` | Наименее недавно использованный — каждой новой ссылке следующий домен. |
+| `coldest` | Самый «холодный» — с наименьшим числом ссылок за последние 30 дней. |
+
+```php
+use Vaslv\Brevity\DTO\CreateLinkRequest;
+use Vaslv\Brevity\DTO\CreateLinkRule;
+
+// Полный запрос: 6-й/7-й аргументы конструктора — $domainStrategy и $domainGroup.
+$request = new CreateLinkRequest(
+    null,                                       // domain — со стратегией должен быть null
+    null, null, null,                           // title, forward_query, callback_data
+    [new CreateLinkRule('https://example.com/landing')],
+    'round_robin',                              // domain_strategy
+    'campaigns'                                 // domain_group — код группы (опционально)
+);
+$response = $client->createLink($request);
+
+// Однострочник: domainStrategy / domainGroup — 7-й/8-й аргументы.
+$response = $client->createSimpleLink(
+    'https://example.com/landing',
+    null, null, null, null, null,               // domain, title, forward_query, callback_data, transition_mode
+    'random'                                     // domain_strategy
+);
+
+echo $response->getDomain(); // подобранный хост
+```
+
+Противоречивые опции домена отклоняются **на клиенте**, ещё до запроса, как
+`InvalidRequestException`: явный `domain` вместе с `domainStrategy` либо
+`domainGroup` без `domainStrategy`. Пустой пул (нет доменов или группа пуста)
+по-прежнему приходит с сервера как `ValidationException` (422).
+
+### Просмотр справочника
+
+Выбрать домен или группу заранее можно двумя read-only эндпоинтами:
+
+```php
+foreach ($client->listDomainGroups() as $group) {
+    echo $group->getCode().' '.$group->getName().' ('.$group->getDomainsCount().")\n";
+}
+
+// Все домены или только из группы (по коду).
+$domains = $client->listDomains();
+$inGroup = $client->listDomains('campaigns');
+
+foreach ($domains as $domain) {
+    echo $domain->getDomain().($domain->isDefault() ? ' (по умолчанию)' : '')."\n";
+}
+```
+
+У обоих эндпоинтов **отдельный** счётчик лимита от создания ссылок, поэтому
+чтение справочника не расходует бюджет создания ссылок.
+
 ## Обработка ошибок
 
 Каждый документированный HTTP-исход — это типизированное исключение.
@@ -607,11 +782,12 @@ try {
     foreach ($e->getErrors() as $field => $messages) {
         // $field => массив строк-сообщений
     }
-} catch (AuthenticationException $e) {           // 401
-    // нет/невалидный токен или у токена нет links:create
+} catch (AuthenticationException $e) {           // 401 — нет/невалидный токен
+    // перевыпустите или исправьте токен
 } catch (RateLimitException $e) {                // 429
     $waitSeconds = $e->getRetryAfter();          // int|null
-} catch (ApiException $e) {                       // прочие 4xx/5xx
+} catch (ApiException $e) {                       // прочие 4xx/5xx (вкл. 403)
+    // 403 = токен есть, но без способности links:create ($e->getStatusCode() === 403)
     $status = $e->getStatusCode();
     $body   = $e->getResponseBody();             // декодированный JSON, array|null
 } catch (TransportException $e) {                 // сеть / таймаут
@@ -626,6 +802,12 @@ try {
 | `RateLimitException` | 429 | `getRetryAfter(): ?int` |
 | `ApiException` | прочие 4xx/5xx | `getStatusCode(): int`, `getResponseBody(): ?array` |
 | `TransportException` | — (сеть/таймаут) | стандартный `Throwable` |
+| `InvalidRequestException` | — (на клиенте, до запроса) | `\InvalidArgumentException`, бросается при противоречивых опциях домена |
+
+`InvalidRequestException` бросается при **сборке** `CreateLinkRequest` (или из
+`createSimpleLink()`), ещё до HTTP-запроса — см. [Домены](#домены). Он
+наследует `\InvalidArgumentException`, а не `ApiException`, поэтому не
+перехватывается веткой `ApiException` выше.
 
 ## Лимиты, ретраи и таймауты
 
@@ -642,12 +824,14 @@ try {
 | Метод | Сигнатура |
 |---|---|
 | `__construct` | `(array $config, ?ClientInterface $httpClient = null)` |
-| `createSimpleLink` | `(string $url, ?string $domain = null, ?string $title = null, ?bool $forwardQuery = null, ?array $callbackData = null, ?string $transitionMode = null): CreateLinkResponse` |
+| `createSimpleLink` | `(string $url, ?string $domain = null, ?string $title = null, ?bool $forwardQuery = null, ?array $callbackData = null, ?string $transitionMode = null, ?string $domainStrategy = null, ?string $domainGroup = null): CreateLinkResponse` |
 | `createLink` | `(CreateLinkRequest $request): CreateLinkResponse` |
+| `listDomains` | `(?string $group = null): Domain[]` |
+| `listDomainGroups` | `(): DomainGroup[]` |
 
 ### DTO запроса
 
-**`CreateLinkRequest`** — `__construct(?string $domain, ?string $title, ?bool $forwardQuery, ?array $callbackData, CreateLinkRule[] $rules)`
+**`CreateLinkRequest`** — `__construct(?string $domain, ?string $title, ?bool $forwardQuery, ?array $callbackData, CreateLinkRule[] $rules, ?string $domainStrategy = null, ?string $domainGroup = null)`
 
 | Метод | Возвращает | Поле |
 |---|---|---|
@@ -656,6 +840,8 @@ try {
 | `getForwardQuery()` | `?bool` | `forward_query` |
 | `getCallbackData()` | `?array` | `callback_data` |
 | `getRules()` | `CreateLinkRule[]` | `rules` |
+| `getDomainStrategy()` | `?string` | `domain_strategy` |
+| `getDomainGroup()` | `?string` | `domain_group` |
 | `toArray()` | `array` | полное тело JSON (опускает `null`-поля) |
 
 **`CreateLinkRule`** — `__construct(string $url, ?CreateLinkCondition $condition = null, ?string $transitionMode = null)`
@@ -695,8 +881,24 @@ try {
 | `getCondition()` | `?CreateLinkCondition` |
 | `getTransitionMode()` | `?string` |
 
+**`Domain`** — элемент `listDomains()`.
+
+| Метод | Возвращает | Поле |
+|---|---|---|
+| `getDomain()` | `string` | `domain` (хост) |
+| `getUrl()` | `string` | `url` (хост как `https://`-адрес) |
+| `isDefault()` | `bool` | `is_default` |
+
+**`DomainGroup`** — элемент `listDomainGroups()`.
+
+| Метод | Возвращает | Поле |
+|---|---|---|
+| `getCode()` | `string` | `code` (используйте как `group` / `domainGroup`) |
+| `getName()` | `string` | `name` |
+| `getDomainsCount()` | `int` | `domains_count` |
+
 Полный контракт полей запроса/ответа, правила валидации и готовые тестовые
-payload'ы — в [API.md](./API.md) (Приложения A и B).
+payload'ы — в [API.md](./API.md).
 
 ## Тесты
 

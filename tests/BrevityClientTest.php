@@ -16,7 +16,9 @@ use Vaslv\Brevity\BrevityClient;
 use Vaslv\Brevity\DTO\CreateLinkCondition;
 use Vaslv\Brevity\DTO\CreateLinkRequest;
 use Vaslv\Brevity\DTO\CreateLinkRule;
+use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
+use Vaslv\Brevity\Exceptions\InvalidRequestException;
 use Vaslv\Brevity\Exceptions\RateLimitException;
 use Vaslv\Brevity\Exceptions\TransportException;
 use Vaslv\Brevity\Exceptions\ValidationException;
@@ -251,5 +253,295 @@ class BrevityClientTest extends TestCase
 
         $this->expectException(TransportException::class);
         $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+    }
+
+    public function test_create_link_with_domain_strategy_serializes_request(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(201, [], json_encode([
+                    'data' => [
+                        'url' => 'https://go.example.com/Str4tegy',
+                        'domain' => 'go.example.com',
+                        'code' => 'Str4tegy',
+                        'title' => null,
+                        'forward_query' => false,
+                        'callback_data' => null,
+                        'rules' => [
+                            ['url' => 'https://example.com/landing', 'condition' => null, 'transition_mode' => null],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $response = $client->createLink(new CreateLinkRequest(
+            null,
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com/landing')],
+            'round_robin',
+            'campaigns'
+        ));
+
+        $this->assertSame('go.example.com', $response->getDomain());
+
+        $body = json_decode((string) $container[0]['request']->getBody(), true);
+        $this->assertSame('round_robin', $body['domain_strategy']);
+        $this->assertSame('campaigns', $body['domain_group']);
+        $this->assertArrayNotHasKey('domain', $body);
+    }
+
+    public function test_create_simple_link_with_domain_strategy_serializes_request(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(201, [], json_encode([
+                    'data' => [
+                        'url' => 'https://go.example.com/R4ndom00',
+                        'domain' => 'go.example.com',
+                        'code' => 'R4ndom00',
+                        'title' => null,
+                        'forward_query' => false,
+                        'callback_data' => null,
+                        'rules' => [
+                            ['url' => 'https://example.com/landing', 'condition' => null, 'transition_mode' => null],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $response = $client->createSimpleLink(
+            'https://example.com/landing',
+            null,
+            null,
+            null,
+            null,
+            null,
+            'random'
+        );
+
+        $this->assertSame('R4ndom00', $response->getCode());
+
+        $body = json_decode((string) $container[0]['request']->getBody(), true);
+        $this->assertSame('random', $body['domain_strategy']);
+        $this->assertArrayNotHasKey('domain', $body);
+        $this->assertArrayNotHasKey('domain_group', $body);
+    }
+
+    public function test_list_domains_success(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        ['domain' => 'go.example.com', 'url' => 'https://go.example.com', 'is_default' => false],
+                        ['domain' => 'short.example.com', 'url' => 'https://short.example.com', 'is_default' => true],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $domains = $client->listDomains();
+
+        $this->assertCount(2, $domains);
+        $this->assertSame('go.example.com', $domains[0]->getDomain());
+        $this->assertSame('https://go.example.com', $domains[0]->getUrl());
+        $this->assertFalse($domains[0]->isDefault());
+        $this->assertTrue($domains[1]->isDefault());
+
+        $request = $container[0]['request'];
+        $this->assertSame('GET', $request->getMethod());
+        $this->assertSame('/api/domains', $request->getUri()->getPath());
+        $this->assertSame('', $request->getUri()->getQuery());
+        $this->assertSame('Bearer token', $request->getHeaderLine('Authorization'));
+    }
+
+    public function test_list_domains_with_group_adds_query(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        ['domain' => 'go.example.com', 'url' => 'https://go.example.com', 'is_default' => false],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $domains = $client->listDomains('campaigns');
+
+        $this->assertCount(1, $domains);
+        $this->assertSame('group=campaigns', $container[0]['request']->getUri()->getQuery());
+    }
+
+    public function test_list_domains_throws_validation_exception_for_unknown_group(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(422, [], json_encode([
+                    'message' => 'The selected group is invalid.',
+                    'errors' => ['group' => ['The selected group is invalid.']],
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->listDomains('does-not-exist');
+            $this->fail('ValidationException was expected.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('group', $exception->getErrors());
+        }
+    }
+
+    public function test_list_domain_groups_success(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        ['code' => 'campaigns', 'name' => 'Campaigns', 'domains_count' => 5],
+                        ['code' => 'primary', 'name' => 'Primary', 'domains_count' => 3],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $groups = $client->listDomainGroups();
+
+        $this->assertCount(2, $groups);
+        $this->assertSame('campaigns', $groups[0]->getCode());
+        $this->assertSame('Campaigns', $groups[0]->getName());
+        $this->assertSame(5, $groups[0]->getDomainsCount());
+
+        $request = $container[0]['request'];
+        $this->assertSame('GET', $request->getMethod());
+        $this->assertSame('/api/domain-groups', $request->getUri()->getPath());
+    }
+
+    public function test_list_domains_throws_api_exception_on_malformed_body(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode(['unexpected' => true])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $this->expectException(ApiException::class);
+        $client->listDomains();
+    }
+
+    public function test_create_link_request_rejects_domain_with_strategy(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkRequest(
+            'short.example.com',
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com/landing')],
+            'random'
+        );
+    }
+
+    public function test_create_link_request_rejects_group_without_strategy(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkRequest(
+            null,
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com/landing')],
+            null,
+            'campaigns'
+        );
+    }
+
+    public function test_create_link_request_allows_strategy_with_group(): void
+    {
+        $request = new CreateLinkRequest(
+            null,
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com/landing')],
+            'coldest',
+            'campaigns'
+        );
+
+        $body = $request->toArray();
+        $this->assertSame('coldest', $body['domain_strategy']);
+        $this->assertSame('campaigns', $body['domain_group']);
+        $this->assertArrayNotHasKey('domain', $body);
+    }
+
+    public function test_create_simple_link_rejects_domain_with_strategy_before_request(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler([]);
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createSimpleLink(
+                'https://example.com/landing',
+                'short.example.com',
+                null,
+                null,
+                null,
+                null,
+                'random'
+            );
+            $this->fail('InvalidRequestException was expected.');
+        } catch (InvalidRequestException $exception) {
+            $this->assertCount(0, $container, 'No HTTP request should be sent for an invalid request.');
+        }
     }
 }
