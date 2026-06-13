@@ -448,9 +448,19 @@ test payloads live in [API.md](./API.md).
 
 ## Testing
 
+With a local PHP + Composer toolchain:
+
 ```bash
 composer install
 vendor/bin/phpunit
+```
+
+Or, without installing PHP locally, in a reproducible PHP 8.4 container
+(matches the locked dev dependencies):
+
+```bash
+docker compose run --rm tests                 # composer install + phpunit
+docker compose run --rm tests vendor/bin/pint --test   # code-style check
 ```
 
 ## License
@@ -902,9 +912,19 @@ payload'ы — в [API.md](./API.md).
 
 ## Тесты
 
+С локальным PHP и Composer:
+
 ```bash
 composer install
 vendor/bin/phpunit
+```
+
+Либо без установки PHP — в воспроизводимом контейнере на PHP 8.4
+(совпадает с зафиксированными dev-зависимостями):
+
+```bash
+docker compose run --rm tests                 # composer install + phpunit
+docker compose run --rm tests vendor/bin/pint --test   # проверка стиля
 ```
 
 ## Лицензия

@@ -1,0 +1,20 @@
+# Run the test suite in a reproducible PHP 8.4 container:
+#
+#   docker compose run --rm tests          # composer install + phpunit
+#   docker compose run --rm tests vendor/bin/phpunit --filter test_create_link_success
+#   docker compose run --rm tests sh        # interactive shell
+#
+# Source is bind-mounted; `vendor` and the Composer cache live in named volumes,
+# so they persist between runs and never touch the host working tree.
+services:
+  tests:
+    build: .
+    working_dir: /app
+    volumes:
+      - .:/app
+      - vendor:/app/vendor
+      - composer-cache:/tmp/composer-cache
+
+volumes:
+  vendor:
+  composer-cache:

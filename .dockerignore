@@ -1,0 +1,11 @@
+.git
+.idea
+.nova
+.vscode
+.zed
+.fleet
+vendor
+.phpunit.cache
+.phpunit.result.cache
+*.log
+.DS_Store
