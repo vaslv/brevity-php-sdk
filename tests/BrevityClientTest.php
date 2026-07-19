@@ -18,6 +18,7 @@ use Vaslv\Brevity\DTO\CreateLinkRequest;
 use Vaslv\Brevity\DTO\CreateLinkResponse;
 use Vaslv\Brevity\DTO\CreateLinkResponseRule;
 use Vaslv\Brevity\DTO\CreateLinkRule;
+use Vaslv\Brevity\DTO\CreateLinkVariant;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
 use Vaslv\Brevity\Exceptions\ForbiddenException;
@@ -831,6 +832,96 @@ class BrevityClientTest extends TestCase
         $this->assertCount(2, $rule->getConditions());
         $this->assertSame('after_date', $rule->getConditions()[0]->getType());
         $this->assertSame('ip_address', $rule->getConditions()[1]->getType());
+    }
+
+    /**
+     * Contract §7.1 example: an A/B split rule serialized 1:1.
+     */
+    public function test_create_link_rule_serializes_variants(): void
+    {
+        $rule = new CreateLinkRule('https://example.com/control', [], null, [
+            new CreateLinkVariant('https://example.com/a', 1, 'A'),
+            new CreateLinkVariant('https://example.com/b', 3, 'B'),
+        ]);
+
+        $this->assertSame([
+            'url' => 'https://example.com/control',
+            'variants' => [
+                ['url' => 'https://example.com/a', 'weight' => 1, 'label' => 'A'],
+                ['url' => 'https://example.com/b', 'weight' => 3, 'label' => 'B'],
+            ],
+        ], $rule->toArray());
+    }
+
+    public function test_create_link_rule_omits_variants_key_without_split(): void
+    {
+        $rule = new CreateLinkRule('https://example.com/landing');
+
+        $this->assertArrayNotHasKey('variants', $rule->toArray());
+        $this->assertSame([], $rule->getVariants());
+    }
+
+    public function test_create_link_rule_rejects_single_variant(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkRule('https://example.com/control', [], null, [
+            new CreateLinkVariant('https://example.com/a', 1),
+        ]);
+    }
+
+    public function test_create_link_rule_rejects_more_than_twenty_variants(): void
+    {
+        $variants = [];
+        for ($i = 0; $i < 21; $i++) {
+            $variants[] = new CreateLinkVariant('https://example.com/v'.$i, 1);
+        }
+
+        $this->expectException(InvalidRequestException::class);
+        new CreateLinkRule('https://example.com/control', [], null, $variants);
+    }
+
+    public function test_variant_rejects_zero_weight(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkVariant('https://example.com/a', 0);
+    }
+
+    public function test_variant_rejects_weight_above_maximum(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkVariant('https://example.com/a', 1001);
+    }
+
+    public function test_variant_label_length_is_counted_in_characters(): void
+    {
+        $multibyte = new CreateLinkVariant('https://example.com/a', 1, str_repeat('ю', 64));
+        $this->assertSame(64, mb_strlen($multibyte->getLabel()));
+
+        $this->expectException(InvalidRequestException::class);
+        new CreateLinkVariant('https://example.com/a', 1, str_repeat('a', 65));
+    }
+
+    public function test_response_rule_parses_variants(): void
+    {
+        $rule = CreateLinkResponseRule::fromArray([
+            'url' => 'https://example.com/control',
+            'conditions' => [],
+            'condition' => null,
+            'variants' => [
+                ['url' => 'https://example.com/a', 'weight' => 1, 'label' => 'A'],
+                ['url' => 'https://example.com/b', 'weight' => 3, 'label' => null],
+            ],
+            'transition_mode' => null,
+        ]);
+
+        $this->assertCount(2, $rule->getVariants());
+        $this->assertSame('https://example.com/a', $rule->getVariants()[0]->getUrl());
+        $this->assertSame('A', $rule->getVariants()[0]->getLabel());
+        $this->assertSame(3, $rule->getVariants()[1]->getWeight());
+        $this->assertNull($rule->getVariants()[1]->getLabel());
     }
 
     /**

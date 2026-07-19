@@ -15,14 +15,19 @@ class CreateLinkResponseRule
     /** @var string|null */
     private $transitionMode;
 
+    /** @var CreateLinkVariant[] */
+    private $variants;
+
     /**
      * @param  CreateLinkCondition[]  $conditions
+     * @param  CreateLinkVariant[]  $variants
      */
-    public function __construct(string $url, array $conditions = [], ?string $transitionMode = null)
+    public function __construct(string $url, array $conditions = [], ?string $transitionMode = null, array $variants = [])
     {
         $this->url = $url;
         $this->conditions = array_values($conditions);
         $this->transitionMode = $transitionMode;
+        $this->variants = array_values($variants);
     }
 
     public function getUrl(): string
@@ -44,6 +49,14 @@ class CreateLinkResponseRule
     }
 
     /**
+     * @return CreateLinkVariant[]
+     */
+    public function getVariants(): array
+    {
+        return $this->variants;
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      */
     public static function fromArray(array $data): self
@@ -57,11 +70,21 @@ class CreateLinkResponseRule
             }
         }
 
+        $variants = [];
+        if (isset($data['variants']) && is_array($data['variants'])) {
+            foreach ($data['variants'] as $variant) {
+                if (is_array($variant)) {
+                    $variants[] = CreateLinkVariant::fromArray($variant);
+                }
+            }
+        }
+
         // The deprecated single `condition` key mirrors conditions[0] and is ignored.
         return new self(
             (string) $data['url'],
             $conditions,
-            isset($data['transition_mode']) ? (string) $data['transition_mode'] : null
+            isset($data['transition_mode']) ? (string) $data['transition_mode'] : null,
+            $variants
         );
     }
 }
