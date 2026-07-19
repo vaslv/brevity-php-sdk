@@ -1,0 +1,56 @@
+# Runs on pushes to main and on pull requests. Deliberately not on tags.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: Tests (PHP ${{ matrix.php }}${{ matrix.deps == 'lowest' && ', lowest deps' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.1', '7.2', '7.3', '7.4', '8.0', '8.1', '8.2', '8.3', '8.4']
+        deps: [stable]
+        include:
+          - php: '7.1'
+            deps: lowest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '${{ matrix.php }}'
+          coverage: none
+
+      # laravel/pint needs PHP >= 8.1; drop it from the dev deps on older PHP.
+      - name: Remove pint on PHP < 8.1
+        if: ${{ contains(fromJSON('["7.1", "7.2", "7.3", "7.4", "8.0"]'), matrix.php) }}
+        run: composer remove --dev laravel/pint --no-update --no-interaction
+
+      # The lock file pins the PHP 8.4 dev toolchain; resolve per matrix PHP instead.
+      - name: Install dependencies
+        run: composer update --no-interaction --no-progress --prefer-dist ${{ matrix.deps == 'lowest' && '--prefer-lowest --prefer-stable' || '' }}
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
+  lint:
+    name: Pint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Pint
+        run: vendor/bin/pint --test
