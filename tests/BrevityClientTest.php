@@ -19,6 +19,7 @@ use Vaslv\Brevity\DTO\CreateLinkResponse;
 use Vaslv\Brevity\DTO\CreateLinkResponseRule;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\DTO\CreateLinkVariant;
+use Vaslv\Brevity\DTO\UpdateLinkRequest;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
 use Vaslv\Brevity\Exceptions\ForbiddenException;
@@ -550,6 +551,152 @@ class BrevityClientTest extends TestCase
 
         $this->expectException(NotFoundException::class);
         $client->getLink('F0reign1');
+    }
+
+    public function test_update_link_sends_explicit_nulls_and_omits_untouched_fields(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/AbC12345',
+                        'domain' => 'short.example.com',
+                        'code' => 'AbC12345',
+                        'valid_until' => '2026-12-31T23:59:59+00:00',
+                        'max_clicks' => null,
+                        'rules' => [
+                            ['url' => 'https://example.com/landing', 'conditions' => [], 'condition' => null, 'variants' => [], 'transition_mode' => null],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $patch = (new UpdateLinkRequest)
+            ->setMaxClicks(null)
+            ->setValidUntil(new \DateTimeImmutable('2026-12-31T23:59:59+00:00'));
+
+        $link = $client->updateLink('AbC12345', $patch);
+
+        $request = $container[0]['request'];
+        $this->assertSame('PATCH', $request->getMethod());
+        $this->assertSame('/api/v1/links/AbC12345', $request->getUri()->getPath());
+
+        $body = json_decode((string) $request->getBody(), true);
+        $this->assertTrue(array_key_exists('max_clicks', $body), 'An explicit null must be serialized.');
+        $this->assertNull($body['max_clicks']);
+        $this->assertSame('2026-12-31T23:59:59+00:00', $body['valid_until']);
+        $this->assertArrayNotHasKey('title', $body);
+        $this->assertArrayNotHasKey('rules', $body);
+        $this->assertArrayNotHasKey('valid_since', $body);
+
+        $this->assertSame('2026-12-31T23:59:59+00:00', $link->getValidUntil());
+        $this->assertNull($link->getMaxClicks());
+    }
+
+    /**
+     * Contract §5.2 example payload, matched 1:1.
+     */
+    public function test_contract_fixture_patch_payload(): void
+    {
+        $patch = (new UpdateLinkRequest)
+            ->setMaxClicks(null)
+            ->setValidUntil(new \DateTimeImmutable('2026-12-31T23:59:59+00:00'));
+
+        $this->assertSame(
+            ['max_clicks' => null, 'valid_until' => '2026-12-31T23:59:59+00:00'],
+            $patch->toArray()
+        );
+    }
+
+    public function test_update_link_replaces_rules_wholesale(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/AbC12345',
+                        'domain' => 'short.example.com',
+                        'code' => 'AbC12345',
+                        'rules' => [
+                            ['url' => 'https://example.com/sale', 'conditions' => [], 'condition' => null, 'variants' => [], 'transition_mode' => null],
+                            ['url' => 'https://example.com/home', 'conditions' => [], 'condition' => null, 'variants' => [], 'transition_mode' => null],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $patch = (new UpdateLinkRequest)->setRules([
+            new CreateLinkRule('https://example.com/sale', [
+                new CreateLinkCondition('time_before', ['before' => '2026-03-05T10:00:00+00:00']),
+            ]),
+            new CreateLinkRule('https://example.com/home'),
+        ]);
+
+        $link = $client->updateLink('AbC12345', $patch);
+
+        $body = json_decode((string) $container[0]['request']->getBody(), true);
+        $this->assertCount(2, $body['rules']);
+        $this->assertSame('time_before', $body['rules'][0]['conditions'][0]['type']);
+        $this->assertSame(['url' => 'https://example.com/home'], $body['rules'][1]);
+        $this->assertCount(2, $link->getRules());
+    }
+
+    public function test_update_link_rejects_empty_patch_before_request(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler([]);
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->updateLink('AbC12345', new UpdateLinkRequest);
+            $this->fail('InvalidRequestException was expected.');
+        } catch (InvalidRequestException $exception) {
+            $this->assertCount(0, $container, 'No HTTP request should be sent for an empty patch.');
+        }
+    }
+
+    public function test_update_link_request_serializes_cleared_title_and_window(): void
+    {
+        $patch = (new UpdateLinkRequest)
+            ->setTitle(null)
+            ->setValidSince(null);
+
+        $this->assertSame(['title' => null, 'valid_since' => null], $patch->toArray());
+        $this->assertFalse($patch->isEmpty());
+    }
+
+    public function test_update_link_request_rejects_non_positive_max_clicks(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        (new UpdateLinkRequest)->setMaxClicks(0);
+    }
+
+    public function test_update_link_request_rejects_empty_rules_replacement(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        (new UpdateLinkRequest)->setRules([]);
     }
 
     public function test_create_link_retries_and_throws_transport_exception(): void

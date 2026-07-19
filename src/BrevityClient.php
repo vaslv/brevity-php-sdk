@@ -15,9 +15,11 @@ use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\DTO\Domain;
 use Vaslv\Brevity\DTO\DomainGroup;
 use Vaslv\Brevity\DTO\GetLinkResponse;
+use Vaslv\Brevity\DTO\UpdateLinkRequest;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
 use Vaslv\Brevity\Exceptions\ForbiddenException;
+use Vaslv\Brevity\Exceptions\InvalidRequestException;
 use Vaslv\Brevity\Exceptions\MissingAbilityException;
 use Vaslv\Brevity\Exceptions\NotFoundException;
 use Vaslv\Brevity\Exceptions\RateLimitException;
@@ -136,6 +138,34 @@ class BrevityClient
         $response = $this->send('GET', '/api/v1/links/'.rawurlencode($code));
 
         return GetLinkResponse::fromArray($this->extractData($response));
+    }
+
+    /**
+     * Partially update one of your service's links via `PATCH /api/v1/links/{code}`.
+     *
+     * Only the fields set on $request are sent: untouched fields keep their
+     * server-side values, an explicit null clears a value, and rules — when
+     * set — replace the whole list. Requires the `links:update` ability.
+     * Responds with the same shape as link creation.
+     *
+     * @throws ApiException Other 4xx/5xx responses (`http-error`, `server-error`).
+     * @throws AuthenticationException HTTP 401 `unauthenticated`.
+     * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability` (e.g. no `links:update`).
+     * @throws InvalidRequestException An empty patch (no fields set).
+     * @throws NotFoundException HTTP 404 `not-found`.
+     * @throws RateLimitException HTTP 429 `too-many-requests`.
+     * @throws TransportException Network/timeout failure (retries exhausted).
+     * @throws ValidationException HTTP 422 `validation-error` (e.g. an inverted merged window).
+     */
+    public function updateLink(string $code, UpdateLinkRequest $request): CreateLinkResponse
+    {
+        if ($request->isEmpty()) {
+            throw new InvalidRequestException('An update needs at least one field set.');
+        }
+
+        $response = $this->send('PATCH', '/api/v1/links/'.rawurlencode($code), ['json' => $request->toArray()]);
+
+        return CreateLinkResponse::fromArray($this->extractData($response));
     }
 
     /**
