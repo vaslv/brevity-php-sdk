@@ -8,6 +8,9 @@ use Vaslv\Brevity\Exceptions\InvalidRequestException;
 
 class CreateLinkRequest
 {
+    /** Serialization format for `valid_since` / `valid_until` (ISO 8601 with offset). */
+    const DATE_FORMAT = 'Y-m-d\TH:i:sP';
+
     /** @var string|null */
     private $domain;
 
@@ -29,6 +32,15 @@ class CreateLinkRequest
     /** @var string|null */
     private $domainGroup;
 
+    /** @var \DateTimeInterface|null */
+    private $validSince;
+
+    /** @var \DateTimeInterface|null */
+    private $validUntil;
+
+    /** @var int|null */
+    private $maxClicks;
+
     /**
      * Pick the domain in exactly one way: either an explicit $domain, or a
      * $domainStrategy (with an optional $domainGroup), or neither (the server
@@ -39,8 +51,12 @@ class CreateLinkRequest
      * @param  string|null  $domainStrategy  Domain auto-pick strategy: `random` / `round_robin` / `coldest`.
      *                                       Mutually exclusive with $domain; required when $domainGroup is set.
      * @param  string|null  $domainGroup  Group code restricting the auto-pick pool. Requires $domainStrategy.
+     * @param  \DateTimeInterface|null  $validSince  Start of the activity window; the link answers 404 before it.
+     * @param  \DateTimeInterface|null  $validUntil  End of the activity window (inclusive, not before $validSince).
+     * @param  int|null  $maxClicks  Click budget (>= 1, every click counts, bots included); 404 once exhausted.
      *
-     * @throws InvalidRequestException $domain and $domainStrategy together, or $domainGroup without $domainStrategy.
+     * @throws InvalidRequestException Contradictory domain options, an inverted
+     *                                 activity window, or a non-positive $maxClicks.
      */
     public function __construct(
         ?string $domain,
@@ -49,7 +65,10 @@ class CreateLinkRequest
         ?array $callbackData,
         array $rules,
         ?string $domainStrategy = null,
-        ?string $domainGroup = null
+        ?string $domainGroup = null,
+        ?\DateTimeInterface $validSince = null,
+        ?\DateTimeInterface $validUntil = null,
+        ?int $maxClicks = null
     ) {
         $this->domain = $domain;
         $this->title = $title;
@@ -58,8 +77,12 @@ class CreateLinkRequest
         $this->rules = $rules;
         $this->domainStrategy = $domainStrategy;
         $this->domainGroup = $domainGroup;
+        $this->validSince = $validSince;
+        $this->validUntil = $validUntil;
+        $this->maxClicks = $maxClicks;
 
         $this->assertValidDomainOptions();
+        $this->assertValidLimits();
     }
 
     /**
@@ -80,6 +103,28 @@ class CreateLinkRequest
         if ($this->domainGroup !== null && $this->domainStrategy === null) {
             throw new InvalidRequestException(
                 'A `domainGroup` requires a `domainStrategy` to select a domain from it.'
+            );
+        }
+    }
+
+    /**
+     * Reject obviously broken activity limits before any HTTP round trip:
+     * an activity window that ends before it starts, or a click budget
+     * below the server minimum of 1.
+     *
+     * @throws InvalidRequestException
+     */
+    private function assertValidLimits(): void
+    {
+        if ($this->validSince !== null && $this->validUntil !== null && $this->validUntil < $this->validSince) {
+            throw new InvalidRequestException(
+                '`validUntil` must not be earlier than `validSince`.'
+            );
+        }
+
+        if ($this->maxClicks !== null && $this->maxClicks < 1) {
+            throw new InvalidRequestException(
+                '`maxClicks` must be at least 1.'
             );
         }
     }
@@ -122,6 +167,21 @@ class CreateLinkRequest
         return $this->domainGroup;
     }
 
+    public function getValidSince(): ?\DateTimeInterface
+    {
+        return $this->validSince;
+    }
+
+    public function getValidUntil(): ?\DateTimeInterface
+    {
+        return $this->validUntil;
+    }
+
+    public function getMaxClicks(): ?int
+    {
+        return $this->maxClicks;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -157,6 +217,18 @@ class CreateLinkRequest
 
         if ($this->callbackData !== null) {
             $payload['callback_data'] = $this->callbackData;
+        }
+
+        if ($this->validSince !== null) {
+            $payload['valid_since'] = $this->validSince->format(self::DATE_FORMAT);
+        }
+
+        if ($this->validUntil !== null) {
+            $payload['valid_until'] = $this->validUntil->format(self::DATE_FORMAT);
+        }
+
+        if ($this->maxClicks !== null) {
+            $payload['max_clicks'] = $this->maxClicks;
         }
 
         return $payload;

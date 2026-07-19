@@ -15,6 +15,7 @@ use PHPUnit\Framework\TestCase;
 use Vaslv\Brevity\BrevityClient;
 use Vaslv\Brevity\DTO\CreateLinkCondition;
 use Vaslv\Brevity\DTO\CreateLinkRequest;
+use Vaslv\Brevity\DTO\CreateLinkResponse;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
@@ -701,6 +702,118 @@ class BrevityClientTest extends TestCase
         $this->assertSame('coldest', $body['domain_strategy']);
         $this->assertSame('campaigns', $body['domain_group']);
         $this->assertArrayNotHasKey('domain', $body);
+    }
+
+    public function test_create_link_serializes_activity_window_and_click_budget(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(201, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/W1ndowed',
+                        'domain' => 'short.example.com',
+                        'code' => 'W1ndowed',
+                        'title' => null,
+                        'forward_query' => false,
+                        'callback_data' => null,
+                        'valid_since' => '2026-08-01T00:00:00+00:00',
+                        'valid_until' => '2026-09-01T00:00:00+00:00',
+                        'max_clicks' => 100,
+                        'rules' => [
+                            ['url' => 'https://example.com/landing', 'condition' => null, 'transition_mode' => null],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $response = $client->createLink(new CreateLinkRequest(
+            null,
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com/landing')],
+            null,
+            null,
+            new \DateTimeImmutable('2026-08-01T00:00:00+00:00'),
+            new \DateTimeImmutable('2026-09-01T03:00:00+03:00'),
+            100
+        ));
+
+        $body = json_decode((string) $container[0]['request']->getBody(), true);
+        $this->assertSame('2026-08-01T00:00:00+00:00', $body['valid_since']);
+        $this->assertSame('2026-09-01T03:00:00+03:00', $body['valid_until']);
+        $this->assertSame(100, $body['max_clicks']);
+
+        $this->assertSame('2026-08-01T00:00:00+00:00', $response->getValidSince());
+        $this->assertSame('2026-09-01T00:00:00+00:00', $response->getValidUntil());
+        $this->assertSame(100, $response->getMaxClicks());
+    }
+
+    public function test_create_link_request_omits_unset_activity_fields(): void
+    {
+        $request = new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]);
+
+        $body = $request->toArray();
+        $this->assertArrayNotHasKey('valid_since', $body);
+        $this->assertArrayNotHasKey('valid_until', $body);
+        $this->assertArrayNotHasKey('max_clicks', $body);
+    }
+
+    public function test_create_link_response_returns_null_activity_fields_when_absent(): void
+    {
+        $response = CreateLinkResponse::fromArray([
+            'url' => 'https://short.example.com/NoLimits',
+            'domain' => 'short.example.com',
+            'code' => 'NoLimits',
+            'rules' => [],
+        ]);
+
+        $this->assertNull($response->getValidSince());
+        $this->assertNull($response->getValidUntil());
+        $this->assertNull($response->getMaxClicks());
+    }
+
+    public function test_create_link_request_rejects_non_positive_max_clicks(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkRequest(
+            null,
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com')],
+            null,
+            null,
+            null,
+            null,
+            0
+        );
+    }
+
+    public function test_create_link_request_rejects_inverted_activity_window(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkRequest(
+            null,
+            null,
+            null,
+            null,
+            [new CreateLinkRule('https://example.com')],
+            null,
+            null,
+            new \DateTimeImmutable('2026-09-01T00:00:00+00:00'),
+            new \DateTimeImmutable('2026-08-01T00:00:00+00:00')
+        );
     }
 
     public function test_create_simple_link_rejects_domain_with_strategy_before_request(): void
