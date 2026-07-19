@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Vaslv\Brevity\Exceptions;
 
 /**
- * Thrown when the API responds with HTTP 429 (rate limit exceeded).
+ * Thrown when the API responds with HTTP 429 `too-many-requests`.
  *
- * Link creation is limited to 120 requests per minute per service. Extends
- * {@see ApiException}, so existing `catch (ApiException)` blocks keep working.
+ * Requests are limited to 120 per minute per service, with independent
+ * budgets for writes (`POST`/`PATCH` links) and reads (`GET` link and the
+ * registries). Extends {@see ApiException}, so existing
+ * `catch (ApiException)` blocks keep working.
  */
 class RateLimitException extends ApiException
 {
@@ -22,9 +24,10 @@ class RateLimitException extends ApiException
         string $message = 'Rate limit exceeded.',
         int $statusCode = 429,
         ?array $responseBody = null,
-        ?int $retryAfter = null
+        ?int $retryAfter = null,
+        ?string $problemType = null
     ) {
-        parent::__construct($message, $statusCode, $responseBody);
+        parent::__construct($message, $statusCode, $responseBody, $problemType);
         $this->retryAfter = $retryAfter;
     }
 

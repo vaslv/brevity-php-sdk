@@ -16,6 +16,9 @@ use Vaslv\Brevity\DTO\Domain;
 use Vaslv\Brevity\DTO\DomainGroup;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
+use Vaslv\Brevity\Exceptions\ForbiddenException;
+use Vaslv\Brevity\Exceptions\MissingAbilityException;
+use Vaslv\Brevity\Exceptions\NotFoundException;
 use Vaslv\Brevity\Exceptions\RateLimitException;
 use Vaslv\Brevity\Exceptions\TransportException;
 use Vaslv\Brevity\Exceptions\ValidationException;
@@ -60,12 +63,13 @@ class BrevityClient
      * @param  string|null  $domainStrategy  Domain auto-pick strategy: `random` / `round_robin` / `coldest`.
      * @param  string|null  $domainGroup  Group code restricting the auto-pick pool. Requires $domainStrategy.
      *
-     * @throws ApiException Other 4xx/5xx responses.
-     * @throws AuthenticationException HTTP 401 (missing/invalid token).
+     * @throws ApiException Other 4xx/5xx responses (`http-error`, `server-error`).
+     * @throws AuthenticationException HTTP 401 `unauthenticated`.
+     * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability`.
      * @throws InvalidRequestException Contradictory domain options (see {@see CreateLinkRequest}).
-     * @throws RateLimitException HTTP 429 (rate limit exceeded).
+     * @throws RateLimitException HTTP 429 `too-many-requests`.
      * @throws TransportException Network/timeout failure.
-     * @throws ValidationException HTTP 422 (validation error).
+     * @throws ValidationException HTTP 422 `validation-error`.
      */
     public function createSimpleLink(
         string $url,
@@ -91,20 +95,22 @@ class BrevityClient
     }
 
     /**
-     * Create a short link and its transition rules via `POST /api/links`.
+     * Create a short link and its transition rules via `POST /api/v1/links`.
      *
      * Network failures and 5xx responses are retried up to the configured
      * `retries` count; 4xx responses are surfaced immediately as typed exceptions.
      *
-     * @throws ApiException Other 4xx/5xx responses.
-     * @throws AuthenticationException HTTP 401 (missing/invalid token).
-     * @throws RateLimitException HTTP 429 (rate limit exceeded).
+     * @throws ApiException Other 4xx/5xx responses (`http-error`, `server-error`).
+     * @throws AuthenticationException HTTP 401 `unauthenticated`.
+     * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability`.
+     * @throws NotFoundException HTTP 404 `not-found`.
+     * @throws RateLimitException HTTP 429 `too-many-requests`.
      * @throws TransportException Network/timeout failure (retries exhausted).
-     * @throws ValidationException HTTP 422 (validation error).
+     * @throws ValidationException HTTP 422 `validation-error`.
      */
     public function createLink(CreateLinkRequest $request): CreateLinkResponse
     {
-        $response = $this->send('POST', '/api/links', ['json' => $request->toArray()]);
+        $response = $this->send('POST', '/api/v1/links', ['json' => $request->toArray()]);
 
         $payload = $this->decodeBody((string) $response->getBody());
         if (! isset($payload['data']) || ! is_array($payload['data'])) {
@@ -115,7 +121,7 @@ class BrevityClient
     }
 
     /**
-     * List short-link domains via `GET /api/domains`.
+     * List short-link domains via `GET /api/v1/domains`.
      *
      * Without a group returns all domains; pass $group (a group code) to restrict
      * the list to a single domain group. Use the returned {@see Domain::getDomain()}
@@ -124,16 +130,17 @@ class BrevityClient
      * @param  string|null  $group  Domain group code; the group must exist (else 422).
      * @return Domain[] Sorted by domain.
      *
-     * @throws ApiException Other 4xx/5xx responses.
-     * @throws AuthenticationException HTTP 401 (missing/invalid token).
-     * @throws RateLimitException HTTP 429 (rate limit exceeded).
+     * @throws ApiException Other 4xx/5xx responses (`http-error`, `server-error`).
+     * @throws AuthenticationException HTTP 401 `unauthenticated`.
+     * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability`.
+     * @throws RateLimitException HTTP 429 `too-many-requests`.
      * @throws TransportException Network/timeout failure (retries exhausted).
-     * @throws ValidationException HTTP 422 (e.g. unknown group code).
+     * @throws ValidationException HTTP 422 `validation-error` (e.g. unknown group code).
      */
     public function listDomains(?string $group = null): array
     {
         $options = $group === null ? [] : ['query' => ['group' => $group]];
-        $response = $this->send('GET', '/api/domains', $options);
+        $response = $this->send('GET', '/api/v1/domains', $options);
 
         $domains = [];
         foreach ($this->extractDataList($response) as $item) {
@@ -146,22 +153,23 @@ class BrevityClient
     }
 
     /**
-     * List domain groups via `GET /api/domain-groups`.
+     * List domain groups via `GET /api/v1/domain-groups`.
      *
      * Use a returned {@see DomainGroup::getCode()} as the `$group` of
      * {@see listDomains()} or the `domainGroup` of a {@see CreateLinkRequest}.
      *
      * @return DomainGroup[] Sorted by name.
      *
-     * @throws ApiException Other 4xx/5xx responses.
-     * @throws AuthenticationException HTTP 401 (missing/invalid token).
-     * @throws RateLimitException HTTP 429 (rate limit exceeded).
+     * @throws ApiException Other 4xx/5xx responses (`http-error`, `server-error`).
+     * @throws AuthenticationException HTTP 401 `unauthenticated`.
+     * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability`.
+     * @throws RateLimitException HTTP 429 `too-many-requests`.
      * @throws TransportException Network/timeout failure (retries exhausted).
-     * @throws ValidationException HTTP 422 (validation error).
+     * @throws ValidationException HTTP 422 `validation-error`.
      */
     public function listDomainGroups(): array
     {
-        $response = $this->send('GET', '/api/domain-groups');
+        $response = $this->send('GET', '/api/v1/domain-groups');
 
         $groups = [];
         foreach ($this->extractDataList($response) as $item) {
@@ -181,11 +189,8 @@ class BrevityClient
      *
      * @param  array<string, mixed>  $options  Extra Guzzle request options (json body, query, ...).
      *
-     * @throws ApiException Other 4xx/5xx responses.
-     * @throws AuthenticationException HTTP 401 (missing/invalid token).
-     * @throws RateLimitException HTTP 429 (rate limit exceeded).
+     * @throws ApiException Any error response, as a typed subclass per the problem `type`.
      * @throws TransportException Network/timeout failure (retries exhausted).
-     * @throws ValidationException HTTP 422 (validation error).
      */
     private function send(string $method, string $uri, array $options = []): ResponseInterface
     {
@@ -230,53 +235,103 @@ class BrevityClient
     }
 
     /**
-     * Map an error HTTP status to the matching typed exception and throw it.
+     * Map an RFC 7807 problem response to the matching typed exception and throw it.
+     *
+     * Dispatch follows the stable machine code in the problem `type` field;
+     * the HTTP status is only a fallback for responses that carry no `type`
+     * (e.g. a proxy answering instead of the API). An unknown `type` maps to
+     * the base {@see ApiException} so future codes degrade gracefully.
      *
      * @throws ApiException
-     * @throws AuthenticationException
-     * @throws RateLimitException
-     * @throws ValidationException
      */
     private function throwForStatus(int $statusCode, ResponseInterface $response): void
     {
         $payload = $this->decodeBody((string) $response->getBody());
 
-        if ($statusCode === 401) {
-            throw new AuthenticationException(
-                $this->extractMessage($payload, 'Unauthenticated.'),
-                $statusCode,
-                $payload
-            );
+        $problemType = null;
+        if (isset($payload['type']) && is_string($payload['type']) && $payload['type'] !== '') {
+            $problemType = $payload['type'];
         }
 
-        if ($statusCode === 422) {
-            $errors = [];
-            if (isset($payload['errors']) && is_array($payload['errors'])) {
-                $errors = $payload['errors'];
-            }
+        switch ($problemType !== null ? $problemType : $this->problemTypeForStatus($statusCode)) {
+            case 'unauthenticated':
+                throw new AuthenticationException(
+                    $this->extractMessage($payload, 'Unauthenticated.'),
+                    $statusCode,
+                    $payload,
+                    $problemType
+                );
+            case 'missing-ability':
+                throw new MissingAbilityException(
+                    $this->extractMessage($payload, 'The token is missing a required ability.'),
+                    $statusCode,
+                    $payload,
+                    $problemType
+                );
+            case 'forbidden':
+                throw new ForbiddenException(
+                    $this->extractMessage($payload, 'Forbidden.'),
+                    $statusCode,
+                    $payload,
+                    $problemType
+                );
+            case 'not-found':
+                throw new NotFoundException(
+                    $this->extractMessage($payload, 'Not found.'),
+                    $statusCode,
+                    $payload,
+                    $problemType
+                );
+            case 'validation-error':
+                $errors = [];
+                if (isset($payload['errors']) && is_array($payload['errors'])) {
+                    $errors = $payload['errors'];
+                }
 
-            throw new ValidationException(
-                $this->extractMessage($payload, 'The given data was invalid.'),
-                $errors,
-                $statusCode,
-                $payload
-            );
+                throw new ValidationException(
+                    $this->extractMessage($payload, 'The request failed validation.'),
+                    $errors,
+                    $statusCode,
+                    $payload,
+                    $problemType
+                );
+            case 'too-many-requests':
+                throw new RateLimitException(
+                    $this->extractMessage($payload, 'Rate limit exceeded.'),
+                    $statusCode,
+                    $payload,
+                    $this->parseRetryAfter($response->getHeaderLine('Retry-After')),
+                    $problemType
+                );
+            default:
+                throw new ApiException(
+                    $this->extractMessage($payload, 'API request failed.'),
+                    $statusCode,
+                    $payload,
+                    $problemType
+                );
         }
+    }
 
-        if ($statusCode === 429) {
-            throw new RateLimitException(
-                $this->extractMessage($payload, 'Rate limit exceeded.'),
-                $statusCode,
-                $payload,
-                $this->parseRetryAfter($response->getHeaderLine('Retry-After'))
-            );
+    /**
+     * Fallback problem type for a bare status code, used when the body has no `type`.
+     */
+    private function problemTypeForStatus(int $statusCode): ?string
+    {
+        switch ($statusCode) {
+            case 401:
+                return 'unauthenticated';
+            case 403:
+                return 'forbidden';
+            case 404:
+                return 'not-found';
+            case 422:
+                return 'validation-error';
+            case 429:
+                return 'too-many-requests';
+            default:
+                return null;
         }
-
-        throw new ApiException(
-            $this->extractMessage($payload, 'API request failed.'),
-            $statusCode,
-            $payload
-        );
     }
 
     /**
@@ -341,12 +396,17 @@ class BrevityClient
     }
 
     /**
+     * Best human-readable message from an RFC 7807 problem body:
+     * `detail`, then `title`, then the given default.
+     *
      * @param  array<string, mixed>  $payload
      */
     private function extractMessage(array $payload, string $default): string
     {
-        if (isset($payload['message']) && is_string($payload['message']) && $payload['message'] !== '') {
-            return $payload['message'];
+        foreach (['detail', 'title'] as $field) {
+            if (isset($payload[$field]) && is_string($payload[$field]) && $payload[$field] !== '') {
+                return $payload[$field];
+            }
         }
 
         return $default;

@@ -16,9 +16,10 @@ class ValidationException extends ApiException
         string $message = 'Validation failed.',
         array $errors = [],
         int $statusCode = 422,
-        ?array $responseBody = null
+        ?array $responseBody = null,
+        ?string $problemType = null
     ) {
-        parent::__construct($message, $statusCode, $responseBody);
+        parent::__construct($message, $statusCode, $responseBody, $problemType);
         $this->errors = $errors;
     }
 

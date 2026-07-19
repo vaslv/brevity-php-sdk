@@ -18,7 +18,10 @@ use Vaslv\Brevity\DTO\CreateLinkRequest;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
+use Vaslv\Brevity\Exceptions\ForbiddenException;
 use Vaslv\Brevity\Exceptions\InvalidRequestException;
+use Vaslv\Brevity\Exceptions\MissingAbilityException;
+use Vaslv\Brevity\Exceptions\NotFoundException;
 use Vaslv\Brevity\Exceptions\RateLimitException;
 use Vaslv\Brevity\Exceptions\TransportException;
 use Vaslv\Brevity\Exceptions\ValidationException;
@@ -147,6 +150,7 @@ class BrevityClientTest extends TestCase
         $this->assertCount(1, $container);
 
         $lastRequest = $container[0]['request'];
+        $this->assertSame('/api/v1/links', $lastRequest->getUri()->getPath());
         $this->assertSame('Bearer test-token', $lastRequest->getHeaderLine('Authorization'));
         $body = json_decode((string) $lastRequest->getBody(), true);
         $this->assertSame('short.example.com', $body['domain']);
@@ -157,22 +161,34 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(401, [], json_encode(['message' => 'Unauthenticated.'])),
+                new Response(401, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'unauthenticated',
+                    'title' => 'Unauthenticated.',
+                    'status' => 401,
+                ])),
             ]
         );
         $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
         $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'bad-token', 'retries' => 0], $httpClient);
 
-        $this->expectException(AuthenticationException::class);
-        $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('AuthenticationException was expected.');
+        } catch (AuthenticationException $exception) {
+            $this->assertSame('unauthenticated', $exception->getProblemType());
+            $this->assertSame(401, $exception->getStatusCode());
+        }
     }
 
     public function test_create_link_throws_validation_exception_with_errors(): void
     {
         $mock = new MockHandler(
             [
-                new Response(422, [], json_encode([
-                    'message' => 'The given data was invalid.',
+                new Response(422, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'validation-error',
+                    'title' => 'The request failed validation.',
+                    'status' => 422,
+                    'detail' => 'The rules.0.condition.data.before field is required.',
                     'errors' => [
                         'rules.0.condition.data.before' => [
                             'The rules.0.condition.data.before field is required.',
@@ -188,8 +204,9 @@ class BrevityClientTest extends TestCase
             $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
             $this->fail('ValidationException was expected.');
         } catch (ValidationException $exception) {
-            $errors = $exception->getErrors();
-            $this->assertArrayHasKey('rules.0.condition.data.before', $errors);
+            $this->assertSame('validation-error', $exception->getProblemType());
+            $this->assertSame('The rules.0.condition.data.before field is required.', $exception->getMessage());
+            $this->assertArrayHasKey('rules.0.condition.data.before', $exception->getErrors());
         }
     }
 
@@ -197,7 +214,11 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(429, ['Retry-After' => '30'], json_encode(['message' => 'Too Many Requests'])),
+                new Response(
+                    429,
+                    ['Content-Type' => 'application/problem+json', 'Retry-After' => '30'],
+                    json_encode(['type' => 'too-many-requests', 'title' => 'Too Many Requests', 'status' => 429])
+                ),
             ]
         );
         $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
@@ -207,8 +228,168 @@ class BrevityClientTest extends TestCase
             $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
             $this->fail('RateLimitException was expected.');
         } catch (RateLimitException $exception) {
+            $this->assertSame('too-many-requests', $exception->getProblemType());
             $this->assertSame(429, $exception->getStatusCode());
             $this->assertSame(30, $exception->getRetryAfter());
+        }
+    }
+
+    public function test_create_link_throws_missing_ability_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(403, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'missing-ability',
+                    'title' => 'Forbidden.',
+                    'status' => 403,
+                    'detail' => 'The token is missing the links:create ability.',
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('MissingAbilityException was expected.');
+        } catch (MissingAbilityException $exception) {
+            $this->assertInstanceOf(ForbiddenException::class, $exception);
+            $this->assertSame('missing-ability', $exception->getProblemType());
+            $this->assertSame('The token is missing the links:create ability.', $exception->getMessage());
+        }
+    }
+
+    public function test_create_link_throws_forbidden_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(403, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'forbidden',
+                    'title' => 'Forbidden.',
+                    'status' => 403,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ForbiddenException was expected.');
+        } catch (ForbiddenException $exception) {
+            $this->assertNotInstanceOf(MissingAbilityException::class, $exception);
+            $this->assertSame('forbidden', $exception->getProblemType());
+        }
+    }
+
+    public function test_create_link_throws_not_found_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(404, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'not-found',
+                    'title' => 'Not Found.',
+                    'status' => 404,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('NotFoundException was expected.');
+        } catch (NotFoundException $exception) {
+            $this->assertSame('not-found', $exception->getProblemType());
+            $this->assertSame(404, $exception->getStatusCode());
+        }
+    }
+
+    public function test_http_error_problem_maps_to_base_api_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(405, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'http-error',
+                    'title' => 'Method Not Allowed.',
+                    'status' => 405,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ApiException was expected.');
+        } catch (ApiException $exception) {
+            $this->assertSame('http-error', $exception->getProblemType());
+            $this->assertSame(405, $exception->getStatusCode());
+        }
+    }
+
+    public function test_server_error_problem_maps_to_base_api_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(500, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'server-error',
+                    'title' => 'Server Error.',
+                    'status' => 500,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ApiException was expected.');
+        } catch (ApiException $exception) {
+            $this->assertSame('server-error', $exception->getProblemType());
+            $this->assertSame(500, $exception->getStatusCode());
+        }
+    }
+
+    public function test_error_without_problem_type_falls_back_to_status_mapping(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(404, [], ''),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('NotFoundException was expected.');
+        } catch (NotFoundException $exception) {
+            $this->assertNull($exception->getProblemType());
+            $this->assertSame(404, $exception->getStatusCode());
+        }
+    }
+
+    public function test_unknown_problem_type_maps_to_base_api_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(403, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'brand-new-code',
+                    'title' => 'Something new.',
+                    'status' => 403,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ApiException was expected.');
+        } catch (ApiException $exception) {
+            $this->assertSame('brand-new-code', $exception->getProblemType());
+            $this->assertSame(403, $exception->getStatusCode());
         }
     }
 
@@ -244,8 +425,8 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new ConnectException('Network down', new Request('POST', '/api/links')),
-                new ConnectException('Network down', new Request('POST', '/api/links')),
+                new ConnectException('Network down', new Request('POST', '/api/v1/links')),
+                new ConnectException('Network down', new Request('POST', '/api/v1/links')),
             ]
         );
         $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
@@ -375,7 +556,7 @@ class BrevityClientTest extends TestCase
 
         $request = $container[0]['request'];
         $this->assertSame('GET', $request->getMethod());
-        $this->assertSame('/api/domains', $request->getUri()->getPath());
+        $this->assertSame('/api/v1/domains', $request->getUri()->getPath());
         $this->assertSame('', $request->getUri()->getQuery());
         $this->assertSame('Bearer token', $request->getHeaderLine('Authorization'));
     }
@@ -409,8 +590,11 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(422, [], json_encode([
-                    'message' => 'The selected group is invalid.',
+                new Response(422, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'validation-error',
+                    'title' => 'The request failed validation.',
+                    'status' => 422,
+                    'detail' => 'The selected group is invalid.',
                     'errors' => ['group' => ['The selected group is invalid.']],
                 ])),
             ]
@@ -455,7 +639,7 @@ class BrevityClientTest extends TestCase
 
         $request = $container[0]['request'];
         $this->assertSame('GET', $request->getMethod());
-        $this->assertSame('/api/domain-groups', $request->getUri()->getPath());
+        $this->assertSame('/api/v1/domain-groups', $request->getUri()->getPath());
     }
 
     public function test_list_domains_throws_api_exception_on_malformed_body(): void
