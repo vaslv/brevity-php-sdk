@@ -1,94 +1,109 @@
-# Работа с API
+# Working with the API
 
-Практическое руководство для тех, кто интегрирует свою систему с Brevity:
-как получить API-токен, аутентифицироваться и создавать короткие ссылки.
+A practical guide for those integrating their system with Brevity:
+how to obtain an API token, authenticate, and create short links.
 
-> Единый источник по HTTP API: как начать работать, полный список полей,
-> правила валидации, колбеки и готовые тестовые payload'ы для авторов SDK.
-> Терминология — в [GLOSSARY.md](./GLOSSARY.md).
-
----
-
-## 1. Что вам понадобится
-
-Чтобы вызывать API, нужны две вещи:
-
-1. **Сервис** (`Service`) — запись в системе, которая владеет ссылками и
-   получает колбеки. Создаётся в админке (раздел **Основное → Сервисы**).
-2. **API-токен** этого сервиса со способностью (ability) `links:create`.
-
-Токен «представляет» сервис: все ссылки, созданные с этим токеном,
-привязываются к сервису-владельцу, а лимиты считаются на сервис.
-
-### Как получить токен
-
-Токен выпускается из админки, программного эндпоинта для этого нет:
-
-1. Откройте сервис: **Основное → Сервисы → \<нужный сервис\>**.
-2. Нажмите **«Создать токен»** (кнопка с иконкой ключа в шапке).
-3. Опционально выберите срок действия (30 / 90 / 365 дней). Без выбора
-   токен бессрочный.
-4. Скопируйте показанный токен **сразу** — он отображается один раз и в
-   открытом виде больше не доступен.
-
-Токен автоматически получает ровно одну способность — `links:create`
-(принцип наименьших привилегий). Просроченные токены периодически
-вычищаются командой `sanctum:prune-expired` по расписанию.
-
-Формат токена: `<id>|<префикс><случайная-часть>`. Префикс нужен для
-сканеров утечек секретов; в заголовок `Authorization` передаётся строка
-целиком, как её показала админка.
+> The single source of truth for the HTTP API: how to get started, the
+> full list of fields, validation rules, callbacks, and ready-made test
+> payloads for SDK authors. For terminology, see
+> [02-glossary.md](https://github.com/vaslv/brevity/blob/main/docs/02-glossary.md).
 
 ---
 
-## 2. Базовый URL и хост
+## 1. What you will need
 
-> ⚠️ **Важно.** API доступен **только на техническом хосте** — на том же
-> хосте, что и `APP_URL` (например, `https://brevity.example.com`).
-> Домены коротких ссылок (`short.example.com` и т.п.) обслуживают только
-> редиректы; запрос к `/api/...` на них вернёт **404**, ещё до проверки
-> токена и лимитов.
+To call the API, you need two things:
+
+1. A **Service** (`Service`) — a record in the system that owns links
+   and receives callbacks. Created in the admin panel (the **Main →
+   Services** section).
+2. An **API token** of that service with the `links:create` ability.
+
+The token "represents" the service: all links created with this token
+are tied to the owning service, and limits are counted per service.
+
+### How to obtain a token
+
+The token is issued from the admin panel; there is no programmatic
+endpoint for this:
+
+1. Open the service: **Main → Services → \<the service you need\>**.
+2. Click **"Create token"** (the button with the key icon in the
+   header).
+3. Optionally pick an expiration period (30 / 90 / 365 days). Without
+   a selection the token is perpetual.
+4. Copy the displayed token **immediately** — it is shown once and is
+   never available in plain text again.
+
+The token automatically receives the `links:create`, `links:read`, and
+`links:update` abilities — exactly what the `/api/v1` surface needs
+(the principle of least privilege). Tokens issued earlier with only
+`links:create` keep creating links; to read/update, reissue the token.
+Expired tokens are periodically purged by the scheduled
+`sanctum:prune-expired` command.
+
+Token format: `<id>|<prefix><random-part>`. The prefix exists for
+secret-leak scanners; pass the whole string into the `Authorization`
+header exactly as the admin panel showed it.
+
+---
+
+## 2. Base URL and host
+
+> ⚠️ **Important.** The API is available **only on the technical
+> host** — the same host as `APP_URL` (for example,
+> `https://brevity.example.com`). Short-link domains
+> (`short.example.com` and the like) serve redirects only; a request to
+> `/api/...` on them returns **404**, even before the token and limits
+> are checked.
 
 ```
-Базовый URL:   https://<технический-хост>
-Пути:          /api/links, /api/domains, /api/domain-groups
-Версионирование: нет
-Формат данных: application/json
+Base URL:      https://<technical-host>
+Paths:         /api/v1/links, /api/v1/domains, /api/v1/domain-groups
+Versioning:    v1 in the path
+Data format:   application/json (v1 errors — application/problem+json)
 ```
 
-Технический хост настраивается через `APP_TECHNICAL_HOST` (по умолчанию
-берётся из хоста `APP_URL`). Узнать актуальное значение для окружения
-можно у администратора.
+> **Legacy.** The old unversioned paths (`/api/links`, `/api/domains`,
+> `/api/domain-groups`) keep working with the previous error format,
+> but are **deprecated**: they are not documented and give no
+> guarantees for new capabilities — the contract is fixed only for
+> `/api/v1` (errors — RFC 7807, see §11). Move your integrations to
+> `/api/v1`.
+
+The technical host is configured via `APP_TECHNICAL_HOST` (by default
+it is taken from the host of `APP_URL`). Ask your administrator for the
+current value for your environment.
 
 ---
 
-## 3. Аутентификация
+## 3. Authentication
 
-Передавайте токен в заголовке `Authorization` по схеме Bearer.
-Рекомендуемый набор заголовков для любого запроса:
+Pass the token in the `Authorization` header using the Bearer scheme.
+The recommended set of headers for any request:
 
 ```http
-Authorization: Bearer <ваш-токен>
+Authorization: Bearer <your-token>
 Accept: application/json
 Content-Type: application/json
 ```
 
-- `Accept: application/json` обязателен — иначе ошибки валидации могут
-  прийти как HTML-редирект, а не JSON.
-- Токен должен нести способность `links:create`. Токены с wildcard `*`
-  тоже принимаются (обратная совместимость).
-- Нет токена / токен невалиден → `401`. Токен есть, но без нужной
-  способности → `403`.
+- `Accept: application/json` is mandatory — otherwise validation errors
+  may come back as an HTML redirect instead of JSON.
+- The token must carry the `links:create` ability. Tokens with the `*`
+  wildcard are also accepted (backward compatibility).
+- No token / invalid token → `401`. Token present but missing the
+  required ability → `403`.
 
 ---
 
-## 4. Быстрый старт
+## 4. Quick start
 
-Минимальный запрос — одно правило с одним целевым URL:
+The minimal request — one rule with one target URL:
 
 ```bash
-curl -sS -X POST https://brevity.example.com/api/links \
-  -H "Authorization: Bearer <ваш-токен>" \
+curl -sS -X POST https://brevity.example.com/api/v1/links \
+  -H "Authorization: Bearer <your-token>" \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
   -d '{
@@ -98,7 +113,7 @@ curl -sS -X POST https://brevity.example.com/api/links \
   }'
 ```
 
-Ответ `201 Created`:
+Response `201 Created`:
 
 ```json
 {
@@ -109,10 +124,15 @@ curl -sS -X POST https://brevity.example.com/api/links \
     "title": null,
     "forward_query": false,
     "callback_data": null,
+    "valid_since": null,
+    "valid_until": null,
+    "max_clicks": null,
     "rules": [
       {
         "url": "https://example.com/landing",
+        "conditions": [],
         "condition": null,
+        "variants": [],
         "transition_mode": null
       }
     ]
@@ -120,61 +140,154 @@ curl -sS -X POST https://brevity.example.com/api/links \
 }
 ```
 
-Готовая короткая ссылка — в поле `data.url`.
+The ready-to-use short link is in the `data.url` field.
 
 ---
 
-## 5. Создание ссылки: `POST /api/links`
+## 5. Creating a link: `POST /api/v1/links`
 
-Создаёт короткую ссылку и её правила перехода за один запрос.
+Creates a short link and its transition rules in a single request.
 
-### Тело запроса (обзор)
+### Request body (overview)
 
-| Поле | Тип | Обяз. | Примечание |
+| Field | Type | Req. | Notes |
 |---|---|:---:|---|
-| `domain` | string\|null | нет | Явный хост короткой ссылки. Должен существовать в справочнике. Взаимоисключим с `domain_strategy`/`domain_group`. Пусто и без стратегии → домен по умолчанию. |
-| `domain_strategy` | string\|null | нет | Автоподбор домена: `random` / `round_robin` / `coldest`. Обязателен при `domain_group`. См. §8. |
-| `domain_group` | string\|null | нет | Код группы — ограничить подбор группой доменов. Без него — по всем доменам. |
-| `title` | string\|null | нет | Заголовок ссылки, до 64 символов. |
-| `forward_query` | bool\|null | нет | Пробрасывать ли query-параметры при прямом редиректе. |
-| `callback_data` | object\|null | нет | Шаблон полезной нагрузки колбека (до 50 ключей). См. §10. |
-| `rules` | array | **да** | Правила перехода, от 1 до 50, в порядке приоритета. |
-| `rules[].url` | string | **да** | Целевой URL (`http`/`https`), до 2000 байт. |
-| `rules[].condition` | object\|null | нет | Условие срабатывания правила. |
-| `rules[].condition.type` | string | при наличии `condition` | Тип условия (см. §6). |
-| `rules[].condition.data` | object\|null | нет | Данные условия; валидируются по типу. |
-| `rules[].transition_mode` | string\|null | нет | Режим перехода: `direct` / `delayed` / `manual`. |
+| `domain` | string\|null | no | Explicit short-link host. Must exist in the dictionary. Mutually exclusive with `domain_strategy`/`domain_group`. Empty and no strategy → the default domain. |
+| `domain_strategy` | string\|null | no | Automatic domain selection: `random` / `round_robin` / `coldest`. Required when `domain_group` is present. See §8. |
+| `domain_group` | string\|null | no | Group code — restrict the selection to a group of domains. Without it — across all domains. |
+| `title` | string\|null | no | Link title, up to 64 characters. |
+| `forward_query` | bool\|null | no | Whether to forward query parameters on a direct redirect. |
+| `callback_data` | object\|null | no | Callback payload template (up to 50 keys). See §10. |
+| `valid_since` | string\|null | no | Start of the activity window, `Y-m-d\TH:i:sP`. Before this moment the link responds with 404 (no click and no callback). |
+| `valid_until` | string\|null | no | End of the activity window (not earlier than `valid_since`; boundaries inclusive). Afterwards — 404. |
+| `max_clicks` | int\|null | no | Click limit (≥ 1; **all** clicks count, including bots). Once reached — 404. Because clicks are recorded asynchronously, the limit may be exceeded by a few clicks during a traffic spike. |
+| `rules` | array | **yes** | Transition rules, 1 to 50, in priority order. |
+| `rules[].url` | string | **yes** | Target URL (`http`/`https`), up to 2000 bytes. |
+| `rules[].conditions` | array\|null | no | Trigger conditions (up to 10). A rule matches when **all** of them match (AND); an empty list — an unconditional rule. |
+| `rules[].conditions[].type` | string | in each condition | Condition type (see §6). |
+| `rules[].conditions[].data` | object\|null | no | Condition data; validated according to the type. |
+| `rules[].condition` | object\|null | no | **Deprecated.** A single condition; collapsed into `conditions[0]`. Do not combine with `conditions`. |
+| `rules[].variants` | array\|null | no | A/B split: 2–20 weighted targets `{ url, weight, label? }`, `weight` — an integer 1..1000. Without `variants` the rule leads to `rules[].url`. See §7.1. |
+| `rules[].transition_mode` | string\|null | no | Transition mode: `direct` / `delayed` / `manual`. |
 
-### Как сервер обрабатывает запрос
+### How the server processes the request
 
-- **Приоритет правил** определяется порядком в массиве `rules`: первый
-  элемент — высший приоритет. При резолве ссылки сервер берёт первое
-  правило, чьё условие истинно (правило без условия истинно всегда — его
-  обычно ставят последним как fallback).
-- **Целевой URL нормализуется** на сервере (нормализация + сортировка
-  query-параметров), поэтому в ответе `rules[].url` может отличаться от
-  отправленного порядком параметров.
-- **Условия дедуплицируются**: одинаковые `(type, data)` переиспользуют
-  одну запись `Condition`.
-- При успехе — `201 Created` с телом ссылки.
+- **Rule priority** is determined by the order in the `rules` array:
+  the first element has the highest priority. When resolving a link,
+  the server takes the first rule whose conditions are **all** true (a
+  rule without conditions is always true — it is usually placed last as
+  a fallback).
+- **The target URL is normalized** on the server (normalization +
+  query-parameter sorting), so `rules[].url` in the response may differ
+  from what was sent in the order of parameters.
+- **Conditions are deduplicated**: identical `(type, data)` pairs reuse
+  a single `Condition` record.
+- On success — `201 Created` with the link body.
 
 ---
 
-## 6. Условия (`condition`)
+## 5.1. Reading a link: `GET /api/v1/links/{code}`
 
-Условие делает правило выборочным. Если условие истинно — применяется это
-правило, иначе сервер пробует следующее по приоритету.
+Returns the state of a link **belonging to your service**: the same
+shape as the creation response, plus a click summary from the
+pre-aggregated counters. Requires the `links:read` ability.
 
-Текущий набор типов:
+```bash
+curl -sS https://brevity.example.com/api/v1/links/AbC12345 \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Accept: application/json"
+```
 
-| `type` | Назначение | `data` |
+Response `200 OK` — the creation fields plus a `clicks` block:
+
+```json
+{
+  "data": {
+    "url": "https://short.example.com/AbC12345",
+    "code": "AbC12345",
+    "valid_since": null,
+    "valid_until": "2026-09-01T00:00:00+00:00",
+    "max_clicks": 100,
+    "clicks": { "total": 42, "non_bots": 37 },
+    "rules": [ { "url": "https://example.com/landing", "conditions": [], "condition": null, "variants": [], "transition_mode": null } ]
+  }
+}
+```
+
+- A code of another service, a non-existent or a deleted one — always
+  `404` `not-found`: the existence of other services' codes is not
+  disclosed.
+- `clicks` is computed from the counters and may lag behind reality by
+  seconds (clicks are recorded asynchronously).
+
+---
+
+## 5.2. Updating a link: `PATCH /api/v1/links/{code}`
+
+Partial update of a link **belonging to your service**. Requires the
+`links:update` ability. PATCH semantics:
+
+- **A field that is not passed does not change.** Send only what you
+  want to change.
+- **An explicit `null` clears the value** — this is how you remove the
+  limit (`max_clicks: null`) or the window (`valid_until: null`).
+- Editable fields: `title`, `forward_query`, `callback_data`,
+  `valid_since`, `valid_until`, `max_clicks`, `rules`.
+- **Immutable**: `code`, `domain`, the owning service. These keys in
+  the body are ignored.
+- `rules`, if passed, **replaces the whole rule set entirely** (the
+  same constraints as at creation: 1–50, order = priority).
+- The resulting window is validated against the merged state: if,
+  after applying the patch, `valid_until` would end up earlier than
+  `valid_since` (including stored values) — `422 validation-error`.
+
+```bash
+curl -sS -X PATCH https://brevity.example.com/api/v1/links/AbC12345 \
+  -H "Authorization: Bearer <your-token>" \
+  -H "Accept: application/json" \
+  -H "Content-Type: application/json" \
+  -d '{ "max_clicks": null, "valid_until": "2026-12-31T23:59:59+00:00" }'
+```
+
+Response `200 OK` — the same shape as at creation. A code of another
+service or a non-existent one — `404 not-found`.
+
+---
+
+## 6. Conditions (`condition`)
+
+A condition makes a rule selective. If the condition is true, this rule
+is applied; otherwise the server tries the next one by priority.
+
+The current set of types:
+
+| `type` | Purpose | `data` |
 |---|---|---|
-| `time_before` | Срабатывает, пока текущее время **раньше** указанного | `{ "before": "<ISO 8601>" }` |
+| `time_before` | Fires while the current time is **before** the specified one | `{ "before": "<ISO 8601>" }` |
+| `after_date` | Fires once the current time has **reached** the specified one (inclusive) | `{ "after": "<ISO 8601>" }` |
+| `query_param` | Fires on an exact `key=value` match of the visit's query parameter | `{ "key": "partner", "value": "acme" }` |
+| `ip_address` | Fires on the visitor's IP: exact / CIDR / IPv4 wildcard | `{ "ip": "10.0.0.0/24" }` |
+| `device` | Fires on the device type from the User-Agent. One device matches several types (iPhone = `ios` AND `mobile`) | `{ "device": "mobile" }` |
 
-Формат `before` — `Y-m-d\TH:i:sP`, например `2026-03-05T10:00:00+00:00`.
-Поле обязательно при `type: time_before`.
+`device` types: `android`, `ios`, `mobile`, `windows`, `macos`,
+`linux`, `chromeos`, `desktop`.
 
-Пример: до 5 марта 2026 — на акционный лендинг, после — на обычный:
+| `type` | Purpose | `data` |
+|---|---|---|
+| `language` | Fires when `Accept-Language` confidently (quality ≥ 0.9) prefers the language; optionally with an exact country | `{ "language": "en", "country": "US" }` |
+
+`language` — ISO 639 (2–3 letters); `country` (optional) — ISO 3166-1
+alpha-2. Without `country` the match is by language; with `country` —
+an exact `language-country` match. An empty header or `*` does not
+match.
+
+The `before`/`after` format is `Y-m-d\TH:i:sP`, for example
+`2026-03-05T10:00:00+00:00`. The field is required for its type. The
+`after_date` + `time_before` pair in one rule (RUL-01) defines a
+landing page's activity window with no gap at the shared boundary.
+
+Example: before March 5, 2026 — to the promo landing page, afterwards —
+to the regular one:
 
 ```json
 {
@@ -191,65 +304,103 @@ curl -sS -X POST https://brevity.example.com/api/links \
 }
 ```
 
-Список типов расширяемый (через `ConditionHandler` в `ConditionRegistry`).
-Актуальный перечень и форму `data` для каждого типа см. в
-[GLOSSARY.md](./GLOSSARY.md).
+The list of types is extensible (via `ConditionHandler` in
+`ConditionRegistry`). For the up-to-date list and the `data` shape of
+each type, see [02-glossary.md](https://github.com/vaslv/brevity/blob/main/docs/02-glossary.md).
 
 ---
 
-## 7. Режимы перехода (`transition_mode`)
+## 7. Transition modes (`transition_mode`)
 
-Как сервер отвечает посетителю при срабатывании правила:
+How the server responds to the visitor when a rule fires:
 
-| Значение | Поведение |
+| Value | Behavior |
 |---|---|
-| `direct` (или `null`) | HTTP-редирект (302). Значение по умолчанию. |
-| `delayed` | HTML-страница с автоматическим редиректом после обратного отсчёта. |
-| `manual` | HTML-страница с кнопкой «продолжить». |
+| `direct` (or `null`) | HTTP redirect (302). The default value. |
+| `delayed` | An HTML page with an automatic redirect after a countdown. |
+| `manual` | An HTML page with a "continue" button. |
 
-Если поле не передано, в ответе оно `null`, что эквивалентно `direct`.
+If the field is not passed, it is `null` in the response, which is
+equivalent to `direct`.
 
 ---
 
-## 8. Домены
+## 7.1. A/B split rules
 
-Сервер определяет домен ссылки в таком порядке:
+A rule can be given `variants` — 2–20 weighted target URLs. When the
+rule wins, the server picks a variant by weights:
 
-1. **Явный `domain`** — короткая ссылка строится на нём. Домен должен
-   существовать в справочнике (иначе `422`).
-2. **`domain_strategy`** (если задан) — домен подбирается автоматически по
-   стратегии, см. ниже.
-3. **Ни домена, ни стратегии** — берётся домен, помеченный «по умолчанию».
-4. **И домена по умолчанию нет** — ссылка остаётся без домена и резолвится
-   через `APP_URL` (поле `domain` в ответе будет `null`).
+```json
+{
+  "rules": [
+    {
+      "url": "https://example.com/control",
+      "variants": [
+        { "url": "https://example.com/a", "weight": 1, "label": "A" },
+        { "url": "https://example.com/b", "weight": 3, "label": "B" }
+      ]
+    }
+  ]
+}
+```
 
-Поле `data.url` в ответе всегда содержит итоговую короткую ссылку с уже
-подставленным доменом.
+- **Weights** are integers from 1 to 1000; a variant's traffic share =
+  `weight / sum of weights` (in the example B gets 75 %). They do not
+  have to add up to 100.
+- **Sticky:** the choice is deterministic by `(IP, User-Agent, link)` —
+  one visitor consistently lands on the same variant.
+- The `label` (optional, up to 64 characters) is returned in the
+  callback via `{{click.variant}}` — the partner sees which variant
+  converted.
+- Without `variants` the rule leads to its own `url` (backward
+  compatibility).
+- `rules[].url` is always required — it is also the fallback if the
+  variants are removed later.
 
-### Автоподбор домена по стратегии
+## 8. Domains
 
-Чтобы получить ссылку на домене **не по умолчанию**, не указывая конкретный
-домен, передайте `domain_strategy`. Подбор идёт по пулу: домены группы
-(если задан `domain_group` — код группы) либо все домены.
+The server determines the link's domain in this order:
 
-| Стратегия | Как выбирает |
+1. **An explicit `domain`** — the short link is built on it. The domain
+   must exist in the dictionary (otherwise `422`).
+2. **`domain_strategy`** (if set) — the domain is selected
+   automatically according to the strategy, see below.
+3. **Neither a domain nor a strategy** — the domain marked as the
+   default is used.
+4. **No default domain either** — the link is left without a domain and
+   resolves via `APP_URL` (the `domain` field in the response will be
+   `null`).
+
+The `data.url` field in the response always contains the final short
+link with the domain already substituted.
+
+### Automatic domain selection by strategy
+
+To get a link on a **non-default** domain without naming a specific
+domain, pass `domain_strategy`. The selection runs over a pool: the
+group's domains (if `domain_group` — a group code — is set) or all
+domains.
+
+| Strategy | How it chooses |
 |---|---|
-| `random` | Случайный домен из пула. |
-| `round_robin` | Наименее недавно использованный — домены идут по кругу, каждой следующей ссылке следующий домен. |
-| `coldest` | Самый «холодный» — с наименьшим числом ссылок за период (по умолчанию 30 дней). |
+| `random` | A random domain from the pool. |
+| `round_robin` | The least recently used one — domains go in a circle, each next link gets the next domain. |
+| `coldest` | The "coldest" one — with the fewest links over a period (30 days by default). |
 
-- `domain` и `domain_strategy` нельзя передавать вместе (`422`).
-- `domain_group` без `domain_strategy` — ошибка (`422`).
-- `domain_group` — это `code` группы (всегда в нижнем регистре, сравнение
-  точное); берите значение из `GET /api/domain-groups`.
-- Статистика для `round_robin`/`coldest` — общая по всем сервисам.
-- Если в пуле нет доменов (нет вообще или группа пуста) — `422`.
+- `domain` and `domain_strategy` cannot be passed together (`422`).
+- `domain_group` without `domain_strategy` is an error (`422`).
+- `domain_group` is the group's `code` (always lowercase, exact
+  comparison); take the value from `GET /api/v1/domain-groups`.
+- The statistics for `round_robin`/`coldest` are shared across all
+  services.
+- If the pool has no domains (none at all, or the group is empty) —
+  `422`.
 
-Домен по кругу из группы `campaigns`:
+A round-robin domain from the `campaigns` group:
 
 ```bash
-curl -sS -X POST https://brevity.example.com/api/links \
-  -H "Authorization: Bearer <ваш-токен>" \
+curl -sS -X POST https://brevity.example.com/api/v1/links \
+  -H "Authorization: Bearer <your-token>" \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
   -d '{
@@ -259,32 +410,34 @@ curl -sS -X POST https://brevity.example.com/api/links \
   }'
 ```
 
-Выбранный домен вернётся в `data.domain` и `data.url`.
+The selected domain is returned in `data.domain` and `data.url`.
 
 ---
 
-## 9. Справочник: домены и группы
+## 9. Dictionaries: domains and groups
 
-Чтобы выбрать домен для ссылки, список доменов и их групп можно получить
-через API. Оба эндпоинта — только чтение, требуют тот же токен со
-способностью `links:create` и отдают данные в обёртке `data`.
+To choose a domain for a link, you can fetch the list of domains and
+their groups via the API. Both endpoints are read-only, require the
+same token with the `links:create` ability, and return data in a `data`
+wrapper.
 
-### `GET /api/domains` — список доменов
+### `GET /api/v1/domains` — list of domains
 
-Без параметров возвращает **все** домены. С параметром `group` (код группы)
-— только домены, входящие в указанную группу.
+Without parameters it returns **all** domains. With the `group`
+parameter (a group code) — only the domains that belong to the
+specified group.
 
-| Параметр | Тип | Обяз. | Примечание |
+| Parameter | Type | Req. | Notes |
 |---|---|:---:|---|
-| `group` | string\|null | нет | Код группы. Должен существовать (иначе `422`). Без него — все домены. |
+| `group` | string\|null | no | Group code. Must exist (otherwise `422`). Without it — all domains. |
 
 ```bash
-curl -sS https://brevity.example.com/api/domains \
-  -H "Authorization: Bearer <ваш-токен>" \
+curl -sS https://brevity.example.com/api/v1/domains \
+  -H "Authorization: Bearer <your-token>" \
   -H "Accept: application/json"
 ```
 
-Ответ `200 OK`:
+Response `200 OK`:
 
 ```json
 {
@@ -295,29 +448,30 @@ curl -sS https://brevity.example.com/api/domains \
 }
 ```
 
-Только домены из группы `campaigns`:
+Only the domains from the `campaigns` group:
 
 ```bash
-curl -sS "https://brevity.example.com/api/domains?group=campaigns" \
-  -H "Authorization: Bearer <ваш-токен>" \
+curl -sS "https://brevity.example.com/api/v1/domains?group=campaigns" \
+  -H "Authorization: Bearer <your-token>" \
   -H "Accept: application/json"
 ```
 
-Поля: `domain` — хост, `url` — он же в виде `https://`-адреса, `is_default`
-— используется ли домен по умолчанию. Сортировка — по `domain`.
+Fields: `domain` — the host, `url` — the same as an `https://` address,
+`is_default` — whether the domain is used by default. Sorted by
+`domain`.
 
-### `GET /api/domain-groups` — список групп
+### `GET /api/v1/domain-groups` — list of groups
 
-Возвращает все группы доменов с числом доменов в каждой. Значение `code`
-используйте как `group` в запросе доменов.
+Returns all domain groups with the number of domains in each. Use the
+`code` value as `group` in the domains request.
 
 ```bash
-curl -sS https://brevity.example.com/api/domain-groups \
-  -H "Authorization: Bearer <ваш-токен>" \
+curl -sS https://brevity.example.com/api/v1/domain-groups \
+  -H "Authorization: Bearer <your-token>" \
   -H "Accept: application/json"
 ```
 
-Ответ `200 OK`:
+Response `200 OK`:
 
 ```json
 {
@@ -328,44 +482,47 @@ curl -sS https://brevity.example.com/api/domain-groups \
 }
 ```
 
-Поля: `code` — код группы, `name` — название, `domains_count` — число
-доменов в группе. Сортировка — по `name`. Код всегда в нижнем регистре;
-в фильтре `?group=` и в поле `domain_group` указывайте его точно как в
-ответе (сравнение точное).
+Fields: `code` — the group code, `name` — the name, `domains_count` —
+the number of domains in the group. Sorted by `name`. The code is
+always lowercase; in the `?group=` filter and in the `domain_group`
+field specify it exactly as in the response (the comparison is exact).
 
 ---
 
-## 10. Колбеки (исходящие уведомления)
+## 10. Callbacks (outgoing notifications)
 
-Если у сервиса задан `callback_url` **и** у ссылки непустой
-`callback_data`, то после **каждого** клика сервер шлёт `POST` на
-`callback_url` с телом из отрендеренного `callback_data`. Дополнительных
-заголовков аутентификации нет.
+If the service has a `callback_url` set **and** the link has a
+non-`null` `callback_data`, then after **every** click the server sends
+a `POST` to the `callback_url` with a body built from the rendered
+`callback_data`. There are no additional authentication headers.
 
-Условия срабатывания (оба обязательны):
+Trigger conditions (both are required):
 
-- у сервиса задан `Service.callback_url` (не `null`);
-- у ссылки непустой `Link.callback_data`.
+- the service has `Service.callback_url` set (not `null`);
+- the link has a non-empty `Link.callback_data`.
 
-### Плейсхолдеры
+### Placeholders
 
-Внутри **строковых** значений `callback_data` можно использовать
-плейсхолдеры вида `{{переменная}}` — сервер подставит реальные данные
-клика. Ключи и нестроковые значения не обрабатываются.
+Inside **string** values of `callback_data` you can use placeholders of
+the form `{{variable}}` — the server substitutes real click data. Keys
+and non-string values are not processed.
 
-| Плейсхолдер | Описание |
+| Placeholder | Description |
 |---|---|
-| `{{click.id}}` | Уникальный ID клика |
-| `{{click.created_at}}` | Время клика (ISO 8601, UTC) |
-| `{{click.ip}}` | IP посетителя (пустая строка, если недоступен) |
-| `{{click.url}}` | Целевой URL, куда был сделан редирект |
-| `{{click.referrer}}` | Значение заголовка Referer (пустая строка, если нет) |
-| `{{click.user_agent}}` | User-Agent посетителя (пустая строка, если нет) |
-| `{{link.id}}` | ID короткой ссылки |
-| `{{link.code}}` | Код короткой ссылки (напр. `AbC12345`) |
-| `{{link.title}}` | Заголовок ссылки (пустая строка, если не задан) |
+| `{{click.id}}` | The unique click ID |
+| `{{click.created_at}}` | Click time (ISO 8601, UTC) |
+| `{{click.is_bot}}` | The bot flag as a string: `true` / `false` (see "Bot flag") |
+| `{{click.ip}}` | The visitor's IP (an empty string if unavailable) |
+| `{{click.url}}` | The target URL the redirect was made to |
+| `{{click.referrer}}` | The value of the Referer header (an empty string if absent) |
+| `{{click.user_agent}}` | The visitor's User-Agent (an empty string if absent) |
+| `{{click.variant}}` | The label of the A/B variant the click landed on (an empty string if there was no split) |
+| `{{click.query.<param>}}` | The value of the visit's query parameter (e.g. `{{click.query.sub_id}}`). The parameter name is taken as is — dots and hyphens are preserved (`{{click.query.sub.id}}`, `{{click.query.sub-id}}`). A missing parameter — an empty string. The name may contain only letters, digits, `_`, `.`, `-`: a parameter with other characters (a space etc.) cannot be addressed by a placeholder |
+| `{{link.id}}` | The short link ID |
+| `{{link.code}}` | The short link code (e.g. `AbC12345`) |
+| `{{link.title}}` | The link title (an empty string if not set) |
 
-Пример — ссылка с `callback_data`:
+Example — a link with `callback_data`:
 
 ```json
 {
@@ -379,7 +536,7 @@ curl -sS https://brevity.example.com/api/domain-groups \
 }
 ```
 
-Тело колбека, отправленное после клика:
+The callback body sent after a click:
 
 ```json
 {
@@ -387,79 +544,124 @@ curl -sS https://brevity.example.com/api/domain-groups \
   "click_id": "1337",
   "timestamp": "2026-04-21T14:05:00+00:00",
   "source_ip": "203.0.113.42",
-  "meta": { "referrer": "https://t.me/channel" }
+  "meta": { "referrer": "https://t.me/channel" },
+  "is_bot": false
 }
 ```
 
-### Гарантии доставки
+### Bot flag (`is_bot`)
 
-- До **5 попыток** с паузами между ними: 1м → 5м → 15м → 1ч.
-- Успех — ответ HTTP `2xx`.
-- Редиректы **не** выполняются; `3xx` или `4xx` — постоянная ошибка (без ретрая).
-- `5xx` либо ошибка соединения/таймаут — ретрай.
-- После исчерпания попыток колбек помечается `failed`.
-- Сервер сохраняет `response_code` и `response_body` (обрезается до 10 000
-  символов) для каждой финальной попытки.
+Every visit is classified by its User-Agent (a library of crawler
+patterns), and **every** callback carries a boolean `is_bot` field at
+the root of the body — regardless of whether it is present in your
+`callback_data`. Callbacks for bot clicks are sent on a par with
+regular ones: the decision whether to count such a visit is left to
+your system. The field is also added to links created before it was
+introduced — it is unconditional and requires no separate
+subscription.
+
+- The `is_bot` key at the root of `callback_data` is **reserved**: a
+  client-provided value is overwritten by the server's.
+- A visit without a User-Agent is considered not a bot (`false`).
+- For substitution inside string values there is the
+  `{{click.is_bot}}` placeholder (the strings `true` / `false`).
+
+### Delivery guarantees
+
+- Up to **5 attempts** with pauses between them: 1m → 5m → 15m → 1h.
+- Success — an HTTP `2xx` response.
+- Redirects are **not** followed; `3xx` or `4xx` is a permanent failure
+  (no retry).
+- `5xx` or a connection error/timeout — retry.
+- Once the attempts are exhausted, the callback is marked `failed`.
+- The server stores the `response_code` and `response_body` (truncated
+  to 10,000 characters) for each final attempt.
 
 ---
 
-## 11. Ошибки
+## 11. Errors
 
-| Код | Когда | Тело |
+Under `/api/v1`, every error is JSON in the RFC 7807 format
+(`Content-Type: application/problem+json`) with a **stable machine
+code** in the `type` field. Program your reaction against `type`, not
+the `title`/`detail` texts — the texts may change.
+
+| HTTP | `type` | When |
 |---|---|---|
-| `401` | Нет токена или он невалиден | `{ "message": "Unauthenticated." }` |
-| `403` | У токена нет способности `links:create` | `{ "message": "Invalid ability provided." }` |
-| `404` | Запрос к API не на техническом хосте | стандартная страница 404 |
-| `422` | Ошибка валидации | `{ "message": "...", "errors": { "<поле>": ["..."] } }` |
-| `429` | Превышен лимит запросов | — |
+| `401` | `unauthenticated` | No token, or it is invalid |
+| `403` | `missing-ability` | The token lacks the required ability |
+| `403` | `forbidden` | The action is forbidden for another reason |
+| `404` | `not-found` | The resource does not exist (or is not available to your token) |
+| `422` | `validation-error` | Validation error; the `errors` field is a "field → messages[]" map |
+| `429` | `too-many-requests` | The request limit is exceeded (see §12) |
+| other `4xx` | `http-error` | Other HTTP errors (wrong method `405`, unsupported format, etc.) |
+| `5xx` | `server-error` | Internal error (no details) |
 
-`422` возвращает `message` (текст первой ошибки, не фиксированная строка)
-и `errors` — карту «поле → список сообщений»:
+Malformed JSON in the body is treated as empty input, so it yields
+`422 validation-error` (not `http-error`).
+
+Example `422`:
 
 ```json
 {
-  "message": "The rules field is required.",
+  "type": "validation-error",
+  "title": "The request failed validation.",
+  "status": 422,
+  "detail": "The rules field is required.",
   "errors": {
-    "rules.0.condition.data.before": [
-      "The rules.0.condition.data.before field is required."
-    ]
+    "rules": ["The rules field is required."]
   }
 }
 ```
 
+A request to the API on a host other than the technical one is rejected
+with `404` (see §2); for `/api/v1/*` paths — in the same
+`problem+json` format (`not-found`).
+
+**Legacy (`/api/*` without a version)** keeps the previous format:
+`401/403` → `{ "message": "..." }`, `422` →
+`{ "message": "<first error>", "errors": { "<field>": ["..."] } }`.
+
 ---
 
-## 12. Лимиты запросов
+## 12. Request limits
 
-Создание ссылок ограничено **120 запросами в минуту на сервис** (счётчик
-по сервису-владельцу токена, а не по IP). Чтение справочника
-(`/api/domains`, `/api/domain-groups`) лимитируется **отдельным** счётчиком
-— тоже 120 запросов в минуту на сервис, поэтому чтение не расходует бюджет
-создания ссылок. Каждый ответ несёт заголовки:
+There are two independent counters, each — **120 requests per minute
+per service** (per the token's owning service, not per IP):
+
+- the **write budget** — `POST /api/v1/links` and
+  `PATCH /api/v1/links/{code}` (updates share the counter with
+  creation);
+- the **read budget** — `GET /api/v1/links/{code}` and the dictionaries
+  (`/api/v1/domains`, `/api/v1/domain-groups`).
+
+Reads and writes do not consume each other's budget. Every response
+carries the headers:
 
 ```http
 X-RateLimit-Limit: 120
 X-RateLimit-Remaining: 119
 ```
 
-При исчерпании лимита — `429 Too Many Requests`. Рекомендуется повторять
-запрос только при сетевых ошибках и `5xx`; на `4xx` (включая `422` и
-`429` без ожидания) — не ретраить вслепую.
+When the limit is exhausted — `429 Too Many Requests`. It is
+recommended to retry a request only on network errors and `5xx`; on
+`4xx` (including `422`, and `429` without waiting) — do not retry
+blindly.
 
 ---
 
-## 13. Примеры
+## 13. Examples
 
-### curl — полный запрос
+### curl — a full request
 
 ```bash
-curl -sS -X POST https://brevity.example.com/api/links \
-  -H "Authorization: Bearer <ваш-токен>" \
+curl -sS -X POST https://brevity.example.com/api/v1/links \
+  -H "Authorization: Bearer <your-token>" \
   -H "Accept: application/json" \
   -H "Content-Type: application/json" \
   -d '{
     "domain": "short.example.com",
-    "title": "Кампания весна-2026",
+    "title": "Spring 2026 campaign",
     "forward_query": true,
     "callback_data": {
       "campaign_id": "cmp-42",
@@ -479,16 +681,16 @@ curl -sS -X POST https://brevity.example.com/api/links \
   }'
 ```
 
-### PHP (Laravel HTTP-клиент)
+### PHP (Laravel HTTP client)
 
 ```php
 use Illuminate\Support\Facades\Http;
 
 $response = Http::withToken($token)
     ->acceptJson()
-    ->post('https://brevity.example.com/api/links', [
+    ->post('https://brevity.example.com/api/v1/links', [
         'domain' => 'short.example.com',
-        'title' => 'Кампания весна-2026',
+        'title' => 'Spring 2026 campaign',
         'rules' => [
             ['url' => 'https://example.com/home'],
         ],
@@ -502,7 +704,7 @@ if ($response->created()) {
 ### JavaScript (fetch)
 
 ```js
-const res = await fetch("https://brevity.example.com/api/links", {
+const res = await fetch("https://brevity.example.com/api/v1/links", {
   method: "POST",
   headers: {
     Authorization: `Bearer ${token}`,
@@ -523,49 +725,51 @@ if (res.status === 201) {
 
 ---
 
-## 14. Частые ошибки
+## 14. Common mistakes
 
-- **404 на каждый запрос** — вы стучитесь не на технический хост, а на
-  домен короткой ссылки. Проверьте базовый URL (см. §2).
-- **403 при наличии токена** — у токена нет способности `links:create`.
-  Перевыпустите токен из админки.
-- **422 на `domain`** — домен не заведён в справочнике. Заведите его в
-  админке (**Основное → Домены**) или не передавайте `domain`, чтобы
-  использовать домен по умолчанию.
-- **422 на `rules.*.url`** — URL не `http`/`https`, длиннее 2000 байт или
-  не проходит валидацию формата.
-- **Ошибки приходят как HTML** — не передан `Accept: application/json`.
+- **404 on every request** — you are hitting a short-link domain
+  instead of the technical host. Check the base URL (see §2).
+- **403 with a token present** — the token lacks the `links:create`
+  ability. Reissue the token from the admin panel.
+- **422 on `domain`** — the domain is not registered in the dictionary.
+  Register it in the admin panel (**Main → Domains**) or omit `domain`
+  to use the default domain.
+- **422 on `rules.*.url`** — the URL is not `http`/`https`, is longer
+  than 2000 bytes, or fails format validation.
+- **Errors come back as HTML** — `Accept: application/json` was not
+  sent.
 
 ---
 
-## 15. Рекомендации для авторов SDK
+## 15. Recommendations for SDK authors
 
-Минимальный публичный контракт клиента:
+The minimal public client contract:
 
 - `createLink(CreateLinkRequest $request): CreateLinkResponse`
 
-Рекомендуемые DTO: `CreateLinkRequest`, `CreateLinkRule`,
+Recommended DTOs: `CreateLinkRequest`, `CreateLinkRule`,
 `CreateLinkCondition`, `CreateLinkResponse`, `CreateLinkResponseRule`.
 
-Рекомендуемые исключения:
+Recommended exceptions:
 
 - `AuthenticationException` (HTTP 401);
-- `ValidationException` (HTTP 422, с `errors` как «поле → сообщения[]»);
-- `ApiException` (прочие 4xx/5xx);
-- `TransportException` (таймаут/сеть).
+- `ValidationException` (HTTP 422, with `errors` as a "field →
+  messages[]" map);
+- `ApiException` (other 4xx/5xx);
+- `TransportException` (timeout/network).
 
-Технические практики:
+Technical practices:
 
-- Таймаут запроса по умолчанию — 5–10 секунд.
-- Ретраить только сетевые ошибки и `5xx` (не ретраить `4xx`).
-- Всегда слать `Accept: application/json`.
-- Не преобразовывать `condition.data`, кроме JSON-сериализации.
+- Default request timeout — 5–10 seconds.
+- Retry only network errors and `5xx` (do not retry `4xx`).
+- Always send `Accept: application/json`.
+- Do not transform `condition.data` beyond JSON serialization.
 
 ---
 
-## 16. Готовые тестовые payload'ы
+## 16. Ready-made test payloads
 
-Валидный `time_before`:
+A valid `time_before`:
 
 ```json
 {
@@ -581,7 +785,7 @@ if (res.status === 201) {
 }
 ```
 
-Валидный отложенный переход:
+A valid delayed transition:
 
 ```json
 {
@@ -591,7 +795,7 @@ if (res.status === 201) {
 }
 ```
 
-Невалидный `time_before` (неверный формат даты) — ждём `422`:
+An invalid `time_before` (wrong date format) — expect `422`:
 
 ```json
 {
@@ -607,7 +811,8 @@ if (res.status === 201) {
 }
 ```
 
-Невалидный `time_before` (нет обязательного поля) — ждём `422`:
+An invalid `time_before` (the required field is missing) — expect
+`422`:
 
 ```json
 {
@@ -622,13 +827,16 @@ if (res.status === 201) {
 
 ---
 
-## 17. Чеклист интеграции
+## 17. Integration checklist
 
-- [ ] Сервис создан в админке.
-- [ ] Выпущен токен со способностью `links:create`, сохранён в секретах.
-- [ ] Базовый URL указывает на технический хост.
-- [ ] Все запросы шлют `Authorization`, `Accept` и `Content-Type`.
-- [ ] Нужный домен заведён в справочнике (или используется домен по умолчанию).
-- [ ] Обрабатываются `401/403/422/429`.
-- [ ] Для колбеков: у сервиса задан `callback_url`, у ссылок — `callback_data`.
-- [ ] Учтён лимит 120 запросов/мин на сервис.
+- [ ] The service is created in the admin panel.
+- [ ] A token with the `links:create` ability is issued and stored in
+      secrets.
+- [ ] The base URL points to the technical host.
+- [ ] All requests send `Authorization`, `Accept`, and `Content-Type`.
+- [ ] The needed domain is registered in the dictionary (or the default
+      domain is used).
+- [ ] `401/403/422/429` are handled.
+- [ ] For callbacks: the service has `callback_url` set, the links have
+      `callback_data`.
+- [ ] The 120 requests/min per-service limit is accounted for.
