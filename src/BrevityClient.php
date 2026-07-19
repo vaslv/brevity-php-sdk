@@ -87,7 +87,7 @@ class BrevityClient
             $forwardQuery,
             $callbackData,
             [
-                new CreateLinkRule($url, null, $transitionMode),
+                new CreateLinkRule($url, [], $transitionMode),
             ],
             $domainStrategy,
             $domainGroup

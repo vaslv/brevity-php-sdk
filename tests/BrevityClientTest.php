@@ -16,6 +16,7 @@ use Vaslv\Brevity\BrevityClient;
 use Vaslv\Brevity\DTO\CreateLinkCondition;
 use Vaslv\Brevity\DTO\CreateLinkRequest;
 use Vaslv\Brevity\DTO\CreateLinkResponse;
+use Vaslv\Brevity\DTO\CreateLinkResponseRule;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
@@ -83,6 +84,7 @@ class BrevityClientTest extends TestCase
         $this->assertSame('short.example.com', $body['domain']);
         $this->assertSame('https://example.com/landing', $body['rules'][0]['url']);
         $this->assertArrayNotHasKey('condition', $body['rules'][0]);
+        $this->assertArrayNotHasKey('conditions', $body['rules'][0]);
         $this->assertSame('direct', $body['rules'][0]['transition_mode']);
     }
 
@@ -103,10 +105,14 @@ class BrevityClientTest extends TestCase
                         'rules' => [
                             [
                                 'url' => 'https://example.com/landing?a=1&b=2',
-                                'condition' => [
-                                    'type' => 'time_before',
-                                    'data' => ['before' => '2026-03-05T10:00:00+00:00'],
+                                'conditions' => [
+                                    [
+                                        'type' => 'time_before',
+                                        'data' => ['before' => '2026-03-05T10:00:00+00:00'],
+                                    ],
                                 ],
+                                'condition' => null,
+                                'variants' => [],
                                 'transition_mode' => 'delayed',
                             ],
                         ],
@@ -136,7 +142,7 @@ class BrevityClientTest extends TestCase
             [
                 new CreateLinkRule(
                     'https://example.com/landing?b=2&a=1',
-                    new CreateLinkCondition('time_before', ['before' => '2026-03-05T10:00:00+00:00']),
+                    [new CreateLinkCondition('time_before', ['before' => '2026-03-05T10:00:00+00:00'])],
                     'delayed'
                 ),
             ]
@@ -148,6 +154,8 @@ class BrevityClientTest extends TestCase
         $this->assertSame('short.example.com', $response->getDomain());
         $this->assertCount(1, $response->getRules());
         $this->assertSame('delayed', $response->getRules()[0]->getTransitionMode());
+        $this->assertCount(1, $response->getRules()[0]->getConditions());
+        $this->assertSame('time_before', $response->getRules()[0]->getConditions()[0]->getType());
         $this->assertCount(1, $container);
 
         $lastRequest = $container[0]['request'];
@@ -155,7 +163,8 @@ class BrevityClientTest extends TestCase
         $this->assertSame('Bearer test-token', $lastRequest->getHeaderLine('Authorization'));
         $body = json_decode((string) $lastRequest->getBody(), true);
         $this->assertSame('short.example.com', $body['domain']);
-        $this->assertSame('time_before', $body['rules'][0]['condition']['type']);
+        $this->assertSame('time_before', $body['rules'][0]['conditions'][0]['type']);
+        $this->assertArrayNotHasKey('condition', $body['rules'][0]);
     }
 
     public function test_create_link_throws_authentication_exception(): void
@@ -779,6 +788,93 @@ class BrevityClientTest extends TestCase
         $this->assertNull($response->getValidSince());
         $this->assertNull($response->getValidUntil());
         $this->assertNull($response->getMaxClicks());
+    }
+
+    public function test_create_link_rule_serializes_multiple_conditions(): void
+    {
+        $rule = new CreateLinkRule('https://example.com/landing', [
+            new CreateLinkCondition('device', ['device' => 'mobile']),
+            new CreateLinkCondition('language', ['language' => 'en', 'country' => 'US']),
+        ]);
+
+        $body = $rule->toArray();
+        $this->assertCount(2, $body['conditions']);
+        $this->assertSame('device', $body['conditions'][0]['type']);
+        $this->assertSame('language', $body['conditions'][1]['type']);
+        $this->assertArrayNotHasKey('condition', $body);
+    }
+
+    public function test_create_link_rule_rejects_more_than_ten_conditions(): void
+    {
+        $conditions = [];
+        for ($i = 0; $i < 11; $i++) {
+            $conditions[] = new CreateLinkCondition('query_param', ['key' => 'p'.$i, 'value' => 'v']);
+        }
+
+        $this->expectException(InvalidRequestException::class);
+        new CreateLinkRule('https://example.com/landing', $conditions);
+    }
+
+    public function test_response_rule_parses_conditions_and_ignores_legacy_condition(): void
+    {
+        $rule = CreateLinkResponseRule::fromArray([
+            'url' => 'https://example.com/landing',
+            'conditions' => [
+                ['type' => 'after_date', 'data' => ['after' => '2026-03-05T10:00:00+00:00']],
+                ['type' => 'ip_address', 'data' => ['ip' => '10.0.0.0/24']],
+            ],
+            'condition' => ['type' => 'after_date', 'data' => ['after' => '2026-03-05T10:00:00+00:00']],
+            'variants' => [],
+            'transition_mode' => null,
+        ]);
+
+        $this->assertCount(2, $rule->getConditions());
+        $this->assertSame('after_date', $rule->getConditions()[0]->getType());
+        $this->assertSame('ip_address', $rule->getConditions()[1]->getType());
+    }
+
+    /**
+     * Contract §16 fixture: the valid `time_before` payload. The SDK emits the
+     * modern `conditions` list, into which the fixture's deprecated single
+     * `condition` folds as element 0 (§5).
+     */
+    public function test_contract_fixture_valid_time_before_payload(): void
+    {
+        $request = new CreateLinkRequest(null, null, null, null, [
+            new CreateLinkRule('https://example.com/redirect', [
+                new CreateLinkCondition('time_before', ['before' => '2026-03-05T10:00:00+00:00']),
+            ]),
+        ]);
+
+        $this->assertSame([
+            'rules' => [
+                [
+                    'url' => 'https://example.com/redirect',
+                    'conditions' => [
+                        [
+                            'type' => 'time_before',
+                            'data' => ['before' => '2026-03-05T10:00:00+00:00'],
+                        ],
+                    ],
+                ],
+            ],
+        ], $request->toArray());
+    }
+
+    /**
+     * Contract §16 fixture: the valid delayed-transition payload, matched 1:1.
+     */
+    public function test_contract_fixture_valid_delayed_transition_payload(): void
+    {
+        $request = new CreateLinkRequest(null, null, null, null, [
+            new CreateLinkRule('https://example.com/redirect', [], 'delayed'),
+        ]);
+
+        $this->assertSame([
+            'rules' => [
+                ['url' => 'https://example.com/redirect', 'transition_mode' => 'delayed'],
+            ],
+        ], $request->toArray());
     }
 
     public function test_create_link_request_rejects_non_positive_max_clicks(): void

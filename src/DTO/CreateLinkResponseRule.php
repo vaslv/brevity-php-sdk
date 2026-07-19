@@ -9,16 +9,19 @@ class CreateLinkResponseRule
     /** @var string */
     private $url;
 
-    /** @var CreateLinkCondition|null */
-    private $condition;
+    /** @var CreateLinkCondition[] */
+    private $conditions;
 
     /** @var string|null */
     private $transitionMode;
 
-    public function __construct(string $url, ?CreateLinkCondition $condition = null, ?string $transitionMode = null)
+    /**
+     * @param  CreateLinkCondition[]  $conditions
+     */
+    public function __construct(string $url, array $conditions = [], ?string $transitionMode = null)
     {
         $this->url = $url;
-        $this->condition = $condition;
+        $this->conditions = array_values($conditions);
         $this->transitionMode = $transitionMode;
     }
 
@@ -27,9 +30,12 @@ class CreateLinkResponseRule
         return $this->url;
     }
 
-    public function getCondition(): ?CreateLinkCondition
+    /**
+     * @return CreateLinkCondition[]
+     */
+    public function getConditions(): array
     {
-        return $this->condition;
+        return $this->conditions;
     }
 
     public function getTransitionMode(): ?string
@@ -42,11 +48,19 @@ class CreateLinkResponseRule
      */
     public static function fromArray(array $data): self
     {
+        $conditions = [];
+        if (isset($data['conditions']) && is_array($data['conditions'])) {
+            foreach ($data['conditions'] as $condition) {
+                if (is_array($condition)) {
+                    $conditions[] = CreateLinkCondition::fromArray($condition);
+                }
+            }
+        }
+
+        // The deprecated single `condition` key mirrors conditions[0] and is ignored.
         return new self(
             (string) $data['url'],
-            isset($data['condition']) && is_array($data['condition'])
-                ? CreateLinkCondition::fromArray($data['condition'])
-                : null,
+            $conditions,
             isset($data['transition_mode']) ? (string) $data['transition_mode'] : null
         );
     }

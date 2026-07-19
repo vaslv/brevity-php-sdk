@@ -4,21 +4,44 @@ declare(strict_types=1);
 
 namespace Vaslv\Brevity\DTO;
 
+use Vaslv\Brevity\Exceptions\InvalidRequestException;
+
 class CreateLinkRule
 {
+    /** Maximum number of conditions per rule accepted by the API. */
+    const MAX_CONDITIONS = 10;
+
     /** @var string */
     private $url;
 
-    /** @var CreateLinkCondition|null */
-    private $condition;
+    /** @var CreateLinkCondition[] */
+    private $conditions;
 
     /** @var string|null */
     private $transitionMode;
 
-    public function __construct(string $url, ?CreateLinkCondition $condition = null, ?string $transitionMode = null)
+    /**
+     * A transition rule: a target URL plus the conditions gating it.
+     *
+     * Conditions combine with AND semantics — the rule wins only when all of
+     * them match; an empty list makes the rule unconditional (usually placed
+     * last as the fallback).
+     *
+     * @param  CreateLinkCondition[]  $conditions  Up to 10 conditions, ANDed together.
+     * @param  string|null  $transitionMode  `direct` / `delayed` / `manual` (null means `direct`).
+     *
+     * @throws InvalidRequestException More than 10 conditions.
+     */
+    public function __construct(string $url, array $conditions = [], ?string $transitionMode = null)
     {
+        if (count($conditions) > self::MAX_CONDITIONS) {
+            throw new InvalidRequestException(
+                sprintf('A rule accepts at most %d conditions.', self::MAX_CONDITIONS)
+            );
+        }
+
         $this->url = $url;
-        $this->condition = $condition;
+        $this->conditions = array_values($conditions);
         $this->transitionMode = $transitionMode;
     }
 
@@ -27,9 +50,12 @@ class CreateLinkRule
         return $this->url;
     }
 
-    public function getCondition(): ?CreateLinkCondition
+    /**
+     * @return CreateLinkCondition[]
+     */
+    public function getConditions(): array
     {
-        return $this->condition;
+        return $this->conditions;
     }
 
     public function getTransitionMode(): ?string
@@ -44,8 +70,11 @@ class CreateLinkRule
     {
         $payload = ['url' => $this->url];
 
-        if ($this->condition !== null) {
-            $payload['condition'] = $this->condition->toArray();
+        if ($this->conditions !== []) {
+            $payload['conditions'] = [];
+            foreach ($this->conditions as $condition) {
+                $payload['conditions'][] = $condition->toArray();
+            }
         }
 
         if ($this->transitionMode !== null) {
@@ -60,11 +89,18 @@ class CreateLinkRule
      */
     public static function fromArray(array $data): self
     {
+        $conditions = [];
+        if (isset($data['conditions']) && is_array($data['conditions'])) {
+            foreach ($data['conditions'] as $condition) {
+                if (is_array($condition)) {
+                    $conditions[] = CreateLinkCondition::fromArray($condition);
+                }
+            }
+        }
+
         return new self(
             (string) $data['url'],
-            isset($data['condition']) && is_array($data['condition'])
-                ? CreateLinkCondition::fromArray($data['condition'])
-                : null,
+            $conditions,
             isset($data['transition_mode']) ? (string) $data['transition_mode'] : null
         );
     }
