@@ -54,3 +54,24 @@ jobs:
 
       - name: Pint
         run: vendor/bin/pint --test
+
+  # PHPStan comes from setup-php tools, not require-dev: the package floor
+  # is PHP 7.1 while PHPStan needs a modern runtime (same reasoning as the
+  # Docker dev image).
+  static:
+    name: PHPStan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: phpstan
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: PHPStan
+        run: phpstan analyse --memory-limit=512M --no-progress

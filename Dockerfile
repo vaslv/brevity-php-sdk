@@ -15,6 +15,12 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 ENV COMPOSER_CACHE_DIR=/tmp/composer-cache
 
+# PHPStan lives in the image, not in the package's require-dev: the library
+# floor is PHP 7.1 while PHPStan needs a modern runtime, so a dev-dependency
+# would break dependency resolution on the oldest supported PHP.
+RUN composer global require --no-interaction phpstan/phpstan \
+    && ln -s /root/.composer/vendor/bin/phpstan /usr/local/bin/phpstan
+
 WORKDIR /app
 
 # Install dependencies (from the committed lock) and run the tests.

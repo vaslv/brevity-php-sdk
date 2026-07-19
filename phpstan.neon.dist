@@ -1,0 +1,16 @@
+# Static analysis config. PHPStan runs from the Docker dev image
+# (docker compose run --rm tests phpstan analyse), not from require-dev —
+# see the note in the Dockerfile.
+#
+# No `phpVersion` pin: analyzing as PHP 7.1 makes PHPStan drop vendor
+# classes written in PHP 8 syntax (illuminate v12), losing the Laravel
+# bridge entirely. PHP 7.1 compatibility is guarded by the CI matrix
+# running the suite on real 7.1.
+parameters:
+    level: 8
+    paths:
+        - src
+        - tests
+    # The method_exists() fallback in the service provider is dead code on
+    # modern Laravel only per PHPDoc types; it is real on Laravel 5.8.
+    treatPhpDocTypesAsCertain: false
