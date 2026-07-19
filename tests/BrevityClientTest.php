@@ -432,6 +432,126 @@ class BrevityClientTest extends TestCase
         $this->assertSame('NoD0main', $response->getCode());
     }
 
+    public function test_get_link_success_with_click_summary(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/AbC12345',
+                        'domain' => 'short.example.com',
+                        'code' => 'AbC12345',
+                        'title' => null,
+                        'forward_query' => false,
+                        'callback_data' => null,
+                        'valid_since' => null,
+                        'valid_until' => '2026-09-01T00:00:00+00:00',
+                        'max_clicks' => 100,
+                        'clicks' => ['total' => 42, 'non_bots' => 37],
+                        'rules' => [
+                            [
+                                'url' => 'https://example.com/landing',
+                                'conditions' => [],
+                                'condition' => null,
+                                'variants' => [],
+                                'transition_mode' => null,
+                            ],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $link = $client->getLink('AbC12345');
+
+        $request = $container[0]['request'];
+        $this->assertSame('GET', $request->getMethod());
+        $this->assertSame('/api/v1/links/AbC12345', $request->getUri()->getPath());
+        $this->assertSame('Bearer token', $request->getHeaderLine('Authorization'));
+
+        $this->assertInstanceOf(CreateLinkResponse::class, $link);
+        $this->assertSame('AbC12345', $link->getCode());
+        $this->assertNull($link->getValidSince());
+        $this->assertSame('2026-09-01T00:00:00+00:00', $link->getValidUntil());
+        $this->assertSame(100, $link->getMaxClicks());
+        $this->assertNotNull($link->getClicks());
+        $this->assertSame(42, $link->getClicks()->getTotal());
+        $this->assertSame(37, $link->getClicks()->getNonBots());
+        $this->assertCount(1, $link->getRules());
+    }
+
+    public function test_get_link_encodes_code_in_path(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/x',
+                        'domain' => 'short.example.com',
+                        'code' => 'x',
+                        'rules' => [],
+                    ],
+                ])),
+            ]
+        );
+
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $client->getLink('Ab C/45');
+
+        $this->assertSame('/api/v1/links/Ab%20C%2F45', $container[0]['request']->getUri()->getPath());
+    }
+
+    public function test_get_link_without_clicks_returns_null_summary(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(200, [], json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/NoClicks',
+                        'domain' => 'short.example.com',
+                        'code' => 'NoClicks',
+                        'rules' => [],
+                    ],
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $this->assertNull($client->getLink('NoClicks')->getClicks());
+    }
+
+    public function test_get_link_throws_not_found_for_foreign_code(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(404, ['Content-Type' => 'application/problem+json'], json_encode([
+                    'type' => 'not-found',
+                    'title' => 'Not Found.',
+                    'status' => 404,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $this->expectException(NotFoundException::class);
+        $client->getLink('F0reign1');
+    }
+
     public function test_create_link_retries_and_throws_transport_exception(): void
     {
         $mock = new MockHandler(

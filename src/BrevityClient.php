@@ -14,6 +14,7 @@ use Vaslv\Brevity\DTO\CreateLinkResponse;
 use Vaslv\Brevity\DTO\CreateLinkRule;
 use Vaslv\Brevity\DTO\Domain;
 use Vaslv\Brevity\DTO\DomainGroup;
+use Vaslv\Brevity\DTO\GetLinkResponse;
 use Vaslv\Brevity\Exceptions\ApiException;
 use Vaslv\Brevity\Exceptions\AuthenticationException;
 use Vaslv\Brevity\Exceptions\ForbiddenException;
@@ -112,12 +113,29 @@ class BrevityClient
     {
         $response = $this->send('POST', '/api/v1/links', ['json' => $request->toArray()]);
 
-        $payload = $this->decodeBody((string) $response->getBody());
-        if (! isset($payload['data']) || ! is_array($payload['data'])) {
-            throw new ApiException('Unexpected response format from API.', $response->getStatusCode(), $payload);
-        }
+        return CreateLinkResponse::fromArray($this->extractData($response));
+    }
 
-        return CreateLinkResponse::fromArray($payload['data']);
+    /**
+     * Read the state of one of your service's links via `GET /api/v1/links/{code}`.
+     *
+     * Returns the creation response shape plus a click summary; requires the
+     * `links:read` ability. A foreign, unknown or deleted code is always a
+     * 404 `not-found` — the API does not disclose other services' codes.
+     *
+     * @throws ApiException Other 4xx/5xx responses (`http-error`, `server-error`).
+     * @throws AuthenticationException HTTP 401 `unauthenticated`.
+     * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability` (e.g. no `links:read`).
+     * @throws NotFoundException HTTP 404 `not-found`.
+     * @throws RateLimitException HTTP 429 `too-many-requests`.
+     * @throws TransportException Network/timeout failure (retries exhausted).
+     * @throws ValidationException HTTP 422 `validation-error`.
+     */
+    public function getLink(string $code): GetLinkResponse
+    {
+        $response = $this->send('GET', '/api/v1/links/'.rawurlencode($code));
+
+        return GetLinkResponse::fromArray($this->extractData($response));
     }
 
     /**
@@ -143,7 +161,7 @@ class BrevityClient
         $response = $this->send('GET', '/api/v1/domains', $options);
 
         $domains = [];
-        foreach ($this->extractDataList($response) as $item) {
+        foreach ($this->extractData($response) as $item) {
             if (is_array($item)) {
                 $domains[] = Domain::fromArray($item);
             }
@@ -172,7 +190,7 @@ class BrevityClient
         $response = $this->send('GET', '/api/v1/domain-groups');
 
         $groups = [];
-        foreach ($this->extractDataList($response) as $item) {
+        foreach ($this->extractData($response) as $item) {
             if (is_array($item)) {
                 $groups[] = DomainGroup::fromArray($item);
             }
@@ -335,11 +353,11 @@ class BrevityClient
     }
 
     /**
-     * Decode a `data`-wrapped list response, asserting the wrapper is present.
+     * Decode a `data`-wrapped response, asserting the wrapper is present.
      *
-     * @return array<int, mixed>
+     * @return array<string, mixed>
      */
-    private function extractDataList(ResponseInterface $response): array
+    private function extractData(ResponseInterface $response): array
     {
         $payload = $this->decodeBody((string) $response->getBody());
         if (! isset($payload['data']) || ! is_array($payload['data'])) {

@@ -127,6 +127,18 @@ class CreateLinkResponse
      */
     public static function fromArray(array $payload): self
     {
+        return new self(...self::argumentsFromPayload($payload));
+    }
+
+    /**
+     * Positional constructor arguments parsed from an API link payload;
+     * subclasses append their own extras to stay aligned with this list.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<int, mixed>
+     */
+    protected static function argumentsFromPayload(array $payload): array
+    {
         $rules = [];
         $rawRules = isset($payload['rules']) && is_array($payload['rules']) ? $payload['rules'] : [];
         foreach ($rawRules as $rule) {
@@ -135,7 +147,7 @@ class CreateLinkResponse
             }
         }
 
-        return new self(
+        return [
             (string) $payload['url'],
             isset($payload['domain']) ? (string) $payload['domain'] : null,
             (string) $payload['code'],
@@ -145,7 +157,7 @@ class CreateLinkResponse
             $rules,
             isset($payload['valid_since']) ? (string) $payload['valid_since'] : null,
             isset($payload['valid_until']) ? (string) $payload['valid_until'] : null,
-            isset($payload['max_clicks']) ? (int) $payload['max_clicks'] : null
-        );
+            isset($payload['max_clicks']) ? (int) $payload['max_clicks'] : null,
+        ];
     }
 }
