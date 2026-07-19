@@ -6,6 +6,10 @@ on:
     branches: [main]
   pull_request:
 
+# The workflow only reads the repo; keep the ambient GITHUB_TOKEN scoped down.
+permissions:
+  contents: read
+
 jobs:
   tests:
     name: Tests (PHP ${{ matrix.php }}${{ matrix.deps == 'lowest' && ', lowest deps' || '' }})
@@ -19,9 +23,9 @@ jobs:
           - php: '7.1'
             deps: lowest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '${{ matrix.php }}'
           coverage: none
@@ -42,9 +46,9 @@ jobs:
     name: Pint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.4'
           coverage: none
@@ -62,9 +66,9 @@ jobs:
     name: PHPStan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.4'
           tools: phpstan
