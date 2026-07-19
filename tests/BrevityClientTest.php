@@ -968,6 +968,24 @@ class BrevityClientTest extends TestCase
         ], $request->toArray());
     }
 
+    public function test_create_link_request_rejects_empty_rules(): void
+    {
+        $this->expectException(InvalidRequestException::class);
+
+        new CreateLinkRequest(null, null, null, null, []);
+    }
+
+    public function test_create_link_request_rejects_more_than_fifty_rules(): void
+    {
+        $rules = [];
+        for ($i = 0; $i < 51; $i++) {
+            $rules[] = new CreateLinkRule('https://example.com/r'.$i);
+        }
+
+        $this->expectException(InvalidRequestException::class);
+        new CreateLinkRequest(null, null, null, null, $rules);
+    }
+
     public function test_create_link_request_rejects_non_positive_max_clicks(): void
     {
         $this->expectException(InvalidRequestException::class);

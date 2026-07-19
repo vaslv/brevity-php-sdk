@@ -11,6 +11,11 @@ class CreateLinkRequest
     /** Serialization format for `valid_since` / `valid_until` (ISO 8601 with offset). */
     const DATE_FORMAT = 'Y-m-d\TH:i:sP';
 
+    /** Rule count bounds accepted by the API. */
+    const MIN_RULES = 1;
+
+    const MAX_RULES = 50;
+
     /** @var string|null */
     private $domain;
 
@@ -82,7 +87,26 @@ class CreateLinkRequest
         $this->maxClicks = $maxClicks;
 
         $this->assertValidDomainOptions();
+        $this->assertValidRuleCount();
         $this->assertValidLimits();
+    }
+
+    /**
+     * Enforce the contract's rule list bounds (1..50, order = priority)
+     * before any HTTP round trip.
+     *
+     * @throws InvalidRequestException
+     */
+    private function assertValidRuleCount(): void
+    {
+        $count = count($this->rules);
+        if ($count < self::MIN_RULES || $count > self::MAX_RULES) {
+            throw new InvalidRequestException(sprintf(
+                'A link needs between %d and %d rules.',
+                self::MIN_RULES,
+                self::MAX_RULES
+            ));
+        }
     }
 
     /**
