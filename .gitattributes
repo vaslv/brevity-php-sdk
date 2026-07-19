@@ -4,6 +4,7 @@
 /.github export-ignore
 /.gitignore export-ignore
 /Dockerfile export-ignore
+/composer.lock export-ignore
 /docker-compose.yml export-ignore
 /phpstan.neon.dist export-ignore
 /phpunit.xml.dist export-ignore
