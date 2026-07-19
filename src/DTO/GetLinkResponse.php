@@ -14,6 +14,7 @@ class GetLinkResponse extends CreateLinkResponse
     private $clicks;
 
     /**
+     * @param  array<string, mixed>|null  $callbackData
      * @param  CreateLinkResponseRule[]  $rules
      */
     public function __construct(

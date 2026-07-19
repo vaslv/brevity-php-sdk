@@ -38,7 +38,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(201, [], json_encode([
+                new Response(201, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/S1mple42',
                         'domain' => 'short.example.com',
@@ -96,7 +96,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(201, [], json_encode([
+                new Response(201, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/AbC12345',
                         'domain' => 'short.example.com',
@@ -158,7 +158,7 @@ class BrevityClientTest extends TestCase
         $this->assertSame('delayed', $response->getRules()[0]->getTransitionMode());
         $this->assertCount(1, $response->getRules()[0]->getConditions());
         $this->assertSame('time_before', $response->getRules()[0]->getConditions()[0]->getType());
-        $this->assertCount(1, $container);
+        $this->assertCount(1, (array) $container);
 
         $lastRequest = $container[0]['request'];
         $this->assertSame('/api/v1/links', $lastRequest->getUri()->getPath());
@@ -173,7 +173,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(401, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(401, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'unauthenticated',
                     'title' => 'Unauthenticated.',
                     'status' => 401,
@@ -196,7 +196,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(422, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(422, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'validation-error',
                     'title' => 'The request failed validation.',
                     'status' => 422,
@@ -229,7 +229,7 @@ class BrevityClientTest extends TestCase
                 new Response(
                     429,
                     ['Content-Type' => 'application/problem+json', 'Retry-After' => '30'],
-                    json_encode(['type' => 'too-many-requests', 'title' => 'Too Many Requests', 'status' => 429])
+                    (string) json_encode(['type' => 'too-many-requests', 'title' => 'Too Many Requests', 'status' => 429])
                 ),
             ]
         );
@@ -250,7 +250,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(403, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(403, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'missing-ability',
                     'title' => 'Forbidden.',
                     'status' => 403,
@@ -275,7 +275,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(403, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(403, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'forbidden',
                     'title' => 'Forbidden.',
                     'status' => 403,
@@ -298,7 +298,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(404, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(404, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'not-found',
                     'title' => 'Not Found.',
                     'status' => 404,
@@ -321,7 +321,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(405, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(405, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'http-error',
                     'title' => 'Method Not Allowed.',
                     'status' => 405,
@@ -344,7 +344,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(500, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(500, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'server-error',
                     'title' => 'Server Error.',
                     'status' => 500,
@@ -382,11 +382,120 @@ class BrevityClientTest extends TestCase
         }
     }
 
-    public function test_unknown_problem_type_maps_to_base_api_exception(): void
+    public function test_authentication_fallback_without_problem_type(): void
+    {
+        $mock = new MockHandler([new Response(401, [], '')]);
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('AuthenticationException was expected.');
+        } catch (AuthenticationException $exception) {
+            $this->assertNull($exception->getProblemType());
+        }
+    }
+
+    public function test_forbidden_fallback_without_problem_type(): void
+    {
+        $mock = new MockHandler([new Response(403, [], '')]);
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ForbiddenException was expected.');
+        } catch (ForbiddenException $exception) {
+            $this->assertNull($exception->getProblemType());
+        }
+    }
+
+    public function test_validation_fallback_without_problem_type_surfaces_errors(): void
     {
         $mock = new MockHandler(
             [
-                new Response(403, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(422, [], (string) json_encode([
+                    'message' => 'The given data was invalid.',
+                    'errors' => ['rules' => ['The rules field is required.']],
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ValidationException was expected.');
+        } catch (ValidationException $exception) {
+            $this->assertNull($exception->getProblemType());
+            $this->assertArrayHasKey('rules', $exception->getErrors());
+        }
+    }
+
+    public function test_rate_limit_fallback_without_problem_type(): void
+    {
+        $mock = new MockHandler([new Response(429, ['Retry-After' => '15'], '')]);
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('RateLimitException was expected.');
+        } catch (RateLimitException $exception) {
+            $this->assertNull($exception->getProblemType());
+            $this->assertSame(15, $exception->getRetryAfter());
+        }
+    }
+
+    public function test_retry_after_header_with_junk_is_ignored(): void
+    {
+        $mock = new MockHandler([new Response(429, ['Retry-After' => '-5'], '')]);
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('RateLimitException was expected.');
+        } catch (RateLimitException $exception) {
+            $this->assertNull($exception->getRetryAfter());
+        }
+    }
+
+    public function test_retry_after_http_date_form_is_parsed(): void
+    {
+        $mock = new MockHandler(
+            [
+                // A past date clamps to 0; a future date yields positive seconds.
+                new Response(429, ['Retry-After' => 'Wed, 21 Oct 2015 07:28:00 GMT'], ''),
+                new Response(429, ['Retry-After' => gmdate('D, d M Y H:i:s \G\M\T', time() + 120)], ''),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $request = new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]);
+
+        try {
+            $client->createLink($request);
+            $this->fail('RateLimitException was expected.');
+        } catch (RateLimitException $exception) {
+            $this->assertSame(0, $exception->getRetryAfter());
+        }
+
+        try {
+            $client->createLink($request);
+            $this->fail('RateLimitException was expected.');
+        } catch (RateLimitException $exception) {
+            $this->assertGreaterThan(100, $exception->getRetryAfter());
+            $this->assertLessThanOrEqual(120, $exception->getRetryAfter());
+        }
+    }
+
+    public function test_unknown_problem_type_falls_back_to_status_mapping(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(403, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'brand-new-code',
                     'title' => 'Something new.',
                     'status' => 403,
@@ -398,10 +507,33 @@ class BrevityClientTest extends TestCase
 
         try {
             $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
-            $this->fail('ApiException was expected.');
-        } catch (ApiException $exception) {
+            $this->fail('ForbiddenException was expected.');
+        } catch (ForbiddenException $exception) {
             $this->assertSame('brand-new-code', $exception->getProblemType());
             $this->assertSame(403, $exception->getStatusCode());
+        }
+    }
+
+    public function test_unknown_problem_type_with_unmapped_status_maps_to_base_api_exception(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(418, ['Content-Type' => 'application/problem+json'], (string) json_encode([
+                    'type' => 'teapot',
+                    'title' => 'I am a teapot.',
+                    'status' => 418,
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ApiException was expected.');
+        } catch (ApiException $exception) {
+            $this->assertSame('teapot', $exception->getProblemType());
+            $this->assertSame(418, $exception->getStatusCode());
         }
     }
 
@@ -409,7 +541,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(201, [], json_encode([
+                new Response(201, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://app.example.com/NoD0main',
                         'domain' => null,
@@ -439,7 +571,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/AbC12345',
                         'domain' => 'short.example.com',
@@ -494,7 +626,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/x',
                         'domain' => 'short.example.com',
@@ -519,7 +651,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/NoClicks',
                         'domain' => 'short.example.com',
@@ -535,11 +667,157 @@ class BrevityClientTest extends TestCase
         $this->assertNull($client->getLink('NoClicks')->getClicks());
     }
 
+    public function test_get_link_rejects_degenerate_codes_before_request(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $stack = HandlerStack::create(new MockHandler([]));
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        foreach (['', '.', '..', '...'] as $code) {
+            try {
+                $client->getLink($code);
+                $this->fail(sprintf('InvalidRequestException was expected for code "%s".', $code));
+            } catch (InvalidRequestException $exception) {
+                // expected
+            }
+        }
+
+        $this->assertCount(0, (array) $container, 'No HTTP request should be sent for a degenerate code.');
+    }
+
+    public function test_update_link_rejects_degenerate_code_before_request(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $stack = HandlerStack::create(new MockHandler([]));
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->updateLink('..', (new UpdateLinkRequest)->setTitle('t'));
+            $this->fail('InvalidRequestException was expected.');
+        } catch (InvalidRequestException $exception) {
+            $this->assertCount(0, (array) $container, 'No HTTP request should be sent for a degenerate code.');
+        }
+    }
+
+    public function test_injected_client_without_http_errors_still_maps_problems(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(422, ['Content-Type' => 'application/problem+json'], (string) json_encode([
+                    'type' => 'validation-error',
+                    'title' => 'The request failed validation.',
+                    'status' => 422,
+                    'errors' => ['rules' => ['The rules field is required.']],
+                ])),
+            ]
+        );
+        $httpClient = new Client([
+            'handler' => HandlerStack::create($mock),
+            'base_uri' => 'https://api.example.com',
+            'http_errors' => false,
+        ]);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        try {
+            $client->createLink(new CreateLinkRequest(null, null, null, null, [new CreateLinkRule('https://example.com')]));
+            $this->fail('ValidationException was expected.');
+        } catch (ValidationException $exception) {
+            $this->assertSame('validation-error', $exception->getProblemType());
+            $this->assertArrayHasKey('rules', $exception->getErrors());
+        }
+    }
+
+    public function test_injected_client_without_http_errors_retries_server_errors(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(500, [], ''),
+                new Response(200, [], (string) json_encode([
+                    'data' => [
+                        ['domain' => 'go.example.com', 'url' => 'https://go.example.com', 'is_default' => false],
+                    ],
+                ])),
+            ]
+        );
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client([
+            'handler' => $stack,
+            'base_uri' => 'https://api.example.com',
+            'http_errors' => false,
+        ]);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 1], $httpClient);
+
+        $domains = $client->listDomains();
+
+        $this->assertCount(1, $domains);
+        $this->assertCount(2, (array) $container, 'The 500 response should be retried once.');
+    }
+
+    public function test_negative_retries_config_behaves_as_zero(): void
+    {
+        $container = [];
+        $history = Middleware::history($container);
+        $mock = new MockHandler(
+            [
+                new Response(200, [], (string) json_encode(['data' => []])),
+            ]
+        );
+        $stack = HandlerStack::create($mock);
+        $stack->push($history);
+        $httpClient = new Client(['handler' => $stack, 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => -1], $httpClient);
+
+        $this->assertSame([], $client->listDomains());
+        $this->assertCount(1, (array) $container, 'A negative retries config must still perform the request once.');
+    }
+
+    public function test_get_link_tolerates_out_of_contract_variant_weight(): void
+    {
+        $mock = new MockHandler(
+            [
+                new Response(200, [], (string) json_encode([
+                    'data' => [
+                        'url' => 'https://short.example.com/x',
+                        'domain' => 'short.example.com',
+                        'code' => 'x',
+                        'rules' => [
+                            [
+                                'url' => 'https://example.com/c',
+                                'conditions' => [],
+                                'variants' => [
+                                    ['url' => 'https://example.com/a', 'weight' => 5000, 'label' => 'A'],
+                                    ['url' => 'https://example.com/b', 'weight' => 1],
+                                ],
+                                'transition_mode' => null,
+                            ],
+                        ],
+                    ],
+                ])),
+            ]
+        );
+        $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
+        $client = new BrevityClient(['base_uri' => 'https://api.example.com', 'token' => 'token', 'retries' => 0], $httpClient);
+
+        $link = $client->getLink('x');
+
+        $this->assertCount(2, $link->getRules()[0]->getVariants());
+        $this->assertSame(5000, $link->getRules()[0]->getVariants()[0]->getWeight());
+    }
+
     public function test_get_link_throws_not_found_for_foreign_code(): void
     {
         $mock = new MockHandler(
             [
-                new Response(404, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(404, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'not-found',
                     'title' => 'Not Found.',
                     'status' => 404,
@@ -559,7 +837,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/AbC12345',
                         'domain' => 'short.example.com',
@@ -622,7 +900,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/AbC12345',
                         'domain' => 'short.example.com',
@@ -671,7 +949,7 @@ class BrevityClientTest extends TestCase
             $client->updateLink('AbC12345', new UpdateLinkRequest);
             $this->fail('InvalidRequestException was expected.');
         } catch (InvalidRequestException $exception) {
-            $this->assertCount(0, $container, 'No HTTP request should be sent for an empty patch.');
+            $this->assertCount(0, (array) $container, 'No HTTP request should be sent for an empty patch.');
         }
     }
 
@@ -720,7 +998,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(201, [], json_encode([
+                new Response(201, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://go.example.com/Str4tegy',
                         'domain' => 'go.example.com',
@@ -765,7 +1043,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(201, [], json_encode([
+                new Response(201, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://go.example.com/R4ndom00',
                         'domain' => 'go.example.com',
@@ -810,7 +1088,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         ['domain' => 'go.example.com', 'url' => 'https://go.example.com', 'is_default' => false],
                         ['domain' => 'short.example.com', 'url' => 'https://short.example.com', 'is_default' => true],
@@ -845,7 +1123,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         ['domain' => 'go.example.com', 'url' => 'https://go.example.com', 'is_default' => false],
                     ],
@@ -868,7 +1146,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(422, ['Content-Type' => 'application/problem+json'], json_encode([
+                new Response(422, ['Content-Type' => 'application/problem+json'], (string) json_encode([
                     'type' => 'validation-error',
                     'title' => 'The request failed validation.',
                     'status' => 422,
@@ -894,7 +1172,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode([
+                new Response(200, [], (string) json_encode([
                     'data' => [
                         ['code' => 'campaigns', 'name' => 'Campaigns', 'domains_count' => 5],
                         ['code' => 'primary', 'name' => 'Primary', 'domains_count' => 3],
@@ -924,7 +1202,7 @@ class BrevityClientTest extends TestCase
     {
         $mock = new MockHandler(
             [
-                new Response(200, [], json_encode(['unexpected' => true])),
+                new Response(200, [], (string) json_encode(['unexpected' => true])),
             ]
         );
         $httpClient = new Client(['handler' => HandlerStack::create($mock), 'base_uri' => 'https://api.example.com']);
@@ -987,7 +1265,7 @@ class BrevityClientTest extends TestCase
         $history = Middleware::history($container);
         $mock = new MockHandler(
             [
-                new Response(201, [], json_encode([
+                new Response(201, [], (string) json_encode([
                     'data' => [
                         'url' => 'https://short.example.com/W1ndowed',
                         'domain' => 'short.example.com',
@@ -1165,7 +1443,7 @@ class BrevityClientTest extends TestCase
     public function test_variant_label_length_is_counted_in_characters(): void
     {
         $multibyte = new CreateLinkVariant('https://example.com/a', 1, str_repeat('ю', 64));
-        $this->assertSame(64, mb_strlen($multibyte->getLabel()));
+        $this->assertSame(64, mb_strlen((string) $multibyte->getLabel()));
 
         $this->expectException(InvalidRequestException::class);
         new CreateLinkVariant('https://example.com/a', 1, str_repeat('a', 65));
@@ -1235,6 +1513,32 @@ class BrevityClientTest extends TestCase
         ], $request->toArray());
     }
 
+    public function test_boundary_values_are_accepted(): void
+    {
+        $conditions = [];
+        for ($i = 0; $i < CreateLinkRule::MAX_CONDITIONS; $i++) {
+            $conditions[] = new CreateLinkCondition('query_param', ['key' => 'p'.$i, 'value' => 'v']);
+        }
+        $rule = new CreateLinkRule('https://example.com', $conditions);
+        $this->assertCount(10, $rule->getConditions());
+
+        $variants = [];
+        for ($i = 0; $i < CreateLinkRule::MAX_VARIANTS; $i++) {
+            $variants[] = new CreateLinkVariant('https://example.com/v'.$i, 1);
+        }
+        $this->assertCount(20, (new CreateLinkRule('https://example.com', [], null, $variants))->getVariants());
+        $this->assertSame(1000, (new CreateLinkVariant('https://example.com/w', 1000))->getWeight());
+
+        $rules = [];
+        for ($i = 0; $i < CreateLinkRequest::MAX_RULES; $i++) {
+            $rules[] = new CreateLinkRule('https://example.com/r'.$i);
+        }
+        $moment = new \DateTimeImmutable('2026-08-01T00:00:00+00:00');
+        $request = new CreateLinkRequest(null, null, null, null, $rules, null, null, $moment, $moment, 1);
+        $this->assertCount(50, $request->getRules());
+        $this->assertSame(1, $request->getMaxClicks());
+    }
+
     public function test_create_link_request_rejects_empty_rules(): void
     {
         $this->expectException(InvalidRequestException::class);
@@ -1251,6 +1555,26 @@ class BrevityClientTest extends TestCase
 
         $this->expectException(InvalidRequestException::class);
         new CreateLinkRequest(null, null, null, null, $rules);
+    }
+
+    public function test_title_length_is_validated_in_characters(): void
+    {
+        $rules = [new CreateLinkRule('https://example.com')];
+
+        $ok = new CreateLinkRequest(null, str_repeat('ю', 64), null, null, $rules);
+        $this->assertSame(64, mb_strlen((string) $ok->getTitle()));
+
+        (new UpdateLinkRequest)->setTitle(str_repeat('ю', 64));
+
+        try {
+            new CreateLinkRequest(null, str_repeat('a', 65), null, null, $rules);
+            $this->fail('InvalidRequestException was expected for a 65-char title.');
+        } catch (InvalidRequestException $exception) {
+            // expected
+        }
+
+        $this->expectException(InvalidRequestException::class);
+        (new UpdateLinkRequest)->setTitle(str_repeat('a', 65));
     }
 
     public function test_create_link_request_rejects_non_positive_max_clicks(): void
@@ -1310,7 +1634,7 @@ class BrevityClientTest extends TestCase
             );
             $this->fail('InvalidRequestException was expected.');
         } catch (InvalidRequestException $exception) {
-            $this->assertCount(0, $container, 'No HTTP request should be sent for an invalid request.');
+            $this->assertCount(0, (array) $container, 'No HTTP request should be sent for an invalid request.');
         }
     }
 }

@@ -21,7 +21,7 @@ class CreateLinkResponse
     /** @var bool|null */
     private $forwardQuery;
 
-    /** @var array|null */
+    /** @var array<string, mixed>|null */
     private $callbackData;
 
     /** @var string|null */
@@ -37,6 +37,7 @@ class CreateLinkResponse
     private $rules;
 
     /**
+     * @param  array<string, mixed>|null  $callbackData
      * @param  CreateLinkResponseRule[]  $rules
      */
     public function __construct(
@@ -88,6 +89,9 @@ class CreateLinkResponse
         return $this->forwardQuery;
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     public function getCallbackData(): ?array
     {
         return $this->callbackData;

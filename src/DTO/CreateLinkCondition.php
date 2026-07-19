@@ -9,9 +9,12 @@ class CreateLinkCondition
     /** @var string */
     private $type;
 
-    /** @var array|null */
+    /** @var array<string, mixed>|null */
     private $data;
 
+    /**
+     * @param  array<string, mixed>|null  $data
+     */
     public function __construct(string $type, ?array $data = null)
     {
         $this->type = $type;
@@ -23,6 +26,9 @@ class CreateLinkCondition
         return $this->type;
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     public function getData(): ?array
     {
         return $this->data;
@@ -51,5 +57,23 @@ class CreateLinkCondition
             (string) $data['type'],
             isset($data['data']) && is_array($data['data']) ? $data['data'] : null
         );
+    }
+
+    /**
+     * Hydrate a list of conditions, skipping non-array entries.
+     *
+     * @param  array<int, mixed>  $items
+     * @return self[]
+     */
+    public static function listFromArray(array $items): array
+    {
+        $conditions = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $conditions[] = self::fromArray($item);
+            }
+        }
+
+        return $conditions;
     }
 }

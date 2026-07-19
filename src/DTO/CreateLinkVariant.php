@@ -47,7 +47,7 @@ class CreateLinkVariant
 
         if ($label !== null && preg_match('/^.{0,'.self::MAX_LABEL_LENGTH.'}$/us', $label) !== 1) {
             throw new InvalidRequestException(sprintf(
-                'A variant label must not exceed %d characters.',
+                'A variant label must be valid UTF-8 and must not exceed %d characters.',
                 self::MAX_LABEL_LENGTH
             ));
         }
@@ -90,14 +90,35 @@ class CreateLinkVariant
     }
 
     /**
+     * Hydrate from an API response without re-running request validation:
+     * responses must stay readable even if the server relaxes the bounds.
+     *
      * @param  array<string, mixed>  $data
      */
     public static function fromArray(array $data): self
     {
-        return new self(
-            (string) $data['url'],
-            isset($data['weight']) ? (int) $data['weight'] : self::MIN_WEIGHT,
-            isset($data['label']) ? (string) $data['label'] : null
-        );
+        $variant = new self((string) $data['url'], self::MIN_WEIGHT);
+        $variant->weight = isset($data['weight']) ? (int) $data['weight'] : self::MIN_WEIGHT;
+        $variant->label = isset($data['label']) ? (string) $data['label'] : null;
+
+        return $variant;
+    }
+
+    /**
+     * Hydrate a list of variants, skipping non-array entries.
+     *
+     * @param  array<int, mixed>  $items
+     * @return self[]
+     */
+    public static function listFromArray(array $items): array
+    {
+        $variants = [];
+        foreach ($items as $item) {
+            if (is_array($item)) {
+                $variants[] = self::fromArray($item);
+            }
+        }
+
+        return $variants;
     }
 }

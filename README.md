@@ -164,7 +164,11 @@ Every `/api/v1` error is an RFC 7807 problem; the SDK dispatches on the stable
 | `not-found` | 404 | `NotFoundException` |
 | `validation-error` | 422 | `ValidationException` (`getErrors()`) |
 | `too-many-requests` | 429 | `RateLimitException` (`getRetryAfter()`) |
-| `http-error`, `server-error`, unknown | other | `ApiException` |
+| `http-error`, `server-error` | other | `ApiException` |
+
+An unknown `type` (a proxy answering instead of the API, a future contract
+code) falls back to the HTTP-status mapping; the raw code stays available
+via `getProblemType()`.
 
 All of the above extend `ApiException` (`getStatusCode()`, `getResponseBody()`,
 `getProblemType()`); `MissingAbilityException` extends `ForbiddenException`.
@@ -219,7 +223,9 @@ Publish the config when you need to tweak it:
 No local PHP toolchain needed — the suite runs in Docker:
 
 ```bash
-docker compose run --rm tests
+docker compose run --rm tests                       # composer install + phpunit
+docker compose run --rm tests phpstan analyse       # static analysis (level 8)
+docker compose run --rm tests vendor/bin/pint --test # code style
 ```
 
 ## Documentation

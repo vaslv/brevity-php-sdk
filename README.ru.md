@@ -164,7 +164,11 @@ $client->updateLink('AbC12345', $patch); // нужна способность li
 | `not-found` | 404 | `NotFoundException` |
 | `validation-error` | 422 | `ValidationException` (`getErrors()`) |
 | `too-many-requests` | 429 | `RateLimitException` (`getRetryAfter()`) |
-| `http-error`, `server-error`, незнакомый | прочие | `ApiException` |
+| `http-error`, `server-error` | прочие | `ApiException` |
+
+Незнакомый `type` (ответил прокси вместо API, будущий код контракта)
+маппится по HTTP-статусу; сырой код остаётся доступен через
+`getProblemType()`.
 
 Все перечисленные наследуют `ApiException` (`getStatusCode()`,
 `getResponseBody()`, `getProblemType()`); `MissingAbilityException` наследует
@@ -219,7 +223,9 @@ $link = Brevity::createSimpleLink('https://example.com/landing');
 Локальный PHP не нужен — тесты запускаются в Docker:
 
 ```bash
-docker compose run --rm tests
+docker compose run --rm tests                       # composer install + phpunit
+docker compose run --rm tests phpstan analyse       # статический анализ (level 8)
+docker compose run --rm tests vendor/bin/pint --test # код-стайл
 ```
 
 ## Документация

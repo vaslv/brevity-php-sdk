@@ -19,12 +19,15 @@ class ApiException extends RuntimeException
     /** @var int */
     private $statusCode;
 
-    /** @var array|null */
+    /** @var array<string, mixed>|null */
     private $responseBody;
 
     /** @var string|null */
     private $problemType;
 
+    /**
+     * @param  array<string, mixed>|null  $responseBody
+     */
     public function __construct(string $message, int $statusCode = 0, ?array $responseBody = null, ?string $problemType = null)
     {
         parent::__construct($message, $statusCode);
@@ -38,6 +41,9 @@ class ApiException extends RuntimeException
         return $this->statusCode;
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     public function getResponseBody(): ?array
     {
         return $this->responseBody;

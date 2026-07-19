@@ -28,6 +28,18 @@ use Vaslv\Brevity\Exceptions\ValidationException;
 
 class BrevityClient
 {
+    /** Stable problem codes the v1 contract defines (§11). */
+    const KNOWN_PROBLEM_TYPES = [
+        'unauthenticated',
+        'missing-ability',
+        'forbidden',
+        'not-found',
+        'validation-error',
+        'too-many-requests',
+        'http-error',
+        'server-error',
+    ];
+
     /** @var ClientInterface */
     private $httpClient;
 
@@ -43,13 +55,16 @@ class BrevityClient
     public function __construct(array $config, ?ClientInterface $httpClient = null)
     {
         $this->token = isset($config['token']) ? (string) $config['token'] : '';
-        $this->maxRetries = isset($config['retries']) ? (int) $config['retries'] : 1;
+        $this->maxRetries = isset($config['retries']) ? max(0, (int) $config['retries']) : 1;
 
         $this->httpClient = $httpClient ?: new Client(
             [
                 'base_uri' => isset($config['base_uri']) ? (string) $config['base_uri'] : '',
                 'timeout' => isset($config['timeout']) ? (float) $config['timeout'] : 7.0,
                 'connect_timeout' => isset($config['connect_timeout']) ? (float) $config['connect_timeout'] : 5.0,
+                // The API never redirects; following one would re-send the
+                // Bearer token to whatever host the redirect points at.
+                'allow_redirects' => false,
             ]
         );
     }
@@ -70,6 +85,7 @@ class BrevityClient
      * @throws AuthenticationException HTTP 401 `unauthenticated`.
      * @throws ForbiddenException HTTP 403 `forbidden` / `missing-ability`.
      * @throws InvalidRequestException Contradictory domain options (see {@see CreateLinkRequest}).
+     * @throws NotFoundException HTTP 404 `not-found`.
      * @throws RateLimitException HTTP 429 `too-many-requests`.
      * @throws TransportException Network/timeout failure.
      * @throws ValidationException HTTP 422 `validation-error`.
@@ -115,7 +131,10 @@ class BrevityClient
     {
         $response = $this->send('POST', '/api/v1/links', ['json' => $request->toArray()]);
 
-        return CreateLinkResponse::fromArray($this->extractData($response));
+        /** @var array<string, mixed> $data */
+        $data = $this->extractData($response);
+
+        return CreateLinkResponse::fromArray($data);
     }
 
     /**
@@ -135,9 +154,14 @@ class BrevityClient
      */
     public function getLink(string $code): GetLinkResponse
     {
+        $this->assertValidCode($code);
+
         $response = $this->send('GET', '/api/v1/links/'.rawurlencode($code));
 
-        return GetLinkResponse::fromArray($this->extractData($response));
+        /** @var array<string, mixed> $data */
+        $data = $this->extractData($response);
+
+        return GetLinkResponse::fromArray($data);
     }
 
     /**
@@ -159,13 +183,18 @@ class BrevityClient
      */
     public function updateLink(string $code, UpdateLinkRequest $request): CreateLinkResponse
     {
+        $this->assertValidCode($code);
+
         if ($request->isEmpty()) {
             throw new InvalidRequestException('An update needs at least one field set.');
         }
 
         $response = $this->send('PATCH', '/api/v1/links/'.rawurlencode($code), ['json' => $request->toArray()]);
 
-        return CreateLinkResponse::fromArray($this->extractData($response));
+        /** @var array<string, mixed> $data */
+        $data = $this->extractData($response);
+
+        return CreateLinkResponse::fromArray($data);
     }
 
     /**
@@ -249,11 +278,26 @@ class BrevityClient
             $attempt++;
 
             try {
-                return $this->httpClient->request(
+                $response = $this->httpClient->request(
                     $method,
                     $uri,
                     ['headers' => $this->buildHeaders()] + $options
                 );
+
+                // A client injected with `http_errors => false` returns error
+                // responses instead of throwing; map them here as well.
+                $statusCode = (int) $response->getStatusCode();
+                if ($statusCode >= 500 && $attempt < $maxAttempts) {
+                    continue;
+                }
+
+                if ($statusCode >= 400) {
+                    $this->throwForStatus($statusCode, $response);
+                }
+
+                return $response;
+            } catch (ApiException $exception) {
+                throw $exception;
             } catch (ConnectException $exception) {
                 if ($attempt >= $maxAttempts) {
                     throw TransportException::fromThrowable($exception);
@@ -285,10 +329,11 @@ class BrevityClient
     /**
      * Map an RFC 7807 problem response to the matching typed exception and throw it.
      *
-     * Dispatch follows the stable machine code in the problem `type` field;
-     * the HTTP status is only a fallback for responses that carry no `type`
-     * (e.g. a proxy answering instead of the API). An unknown `type` maps to
-     * the base {@see ApiException} so future codes degrade gracefully.
+     * Dispatch follows the stable machine code in the problem `type` field.
+     * When the body carries no `type`, or an unknown one (a proxy answering
+     * instead of the API, a future contract code), the HTTP status picks the
+     * exception class so typed catch blocks keep working; the raw code stays
+     * available via {@see ApiException::getProblemType()}.
      *
      * @throws ApiException
      */
@@ -301,7 +346,11 @@ class BrevityClient
             $problemType = $payload['type'];
         }
 
-        switch ($problemType !== null ? $problemType : $this->problemTypeForStatus($statusCode)) {
+        $effectiveType = $problemType !== null && in_array($problemType, self::KNOWN_PROBLEM_TYPES, true)
+            ? $problemType
+            : $this->problemTypeForStatus($statusCode);
+
+        switch ($effectiveType) {
             case 'unauthenticated':
                 throw new AuthenticationException(
                     $this->extractMessage($payload, 'Unauthenticated.'),
@@ -384,8 +433,10 @@ class BrevityClient
 
     /**
      * Decode a `data`-wrapped response, asserting the wrapper is present.
+     * The wrapper holds an object for link endpoints and a list for the
+     * registry endpoints.
      *
-     * @return array<string, mixed>
+     * @return array<int|string, mixed>
      */
     private function extractData(ResponseInterface $response): array
     {
@@ -432,12 +483,37 @@ class BrevityClient
     }
 
     /**
-     * Parse the `Retry-After` header (delta-seconds form) into an int, or null when absent/non-numeric.
+     * Reject link codes that would silently change the request target: an
+     * empty code hits the collection URL, and dot-segment codes ('.', '..')
+     * are normalized away by URI resolution before the request leaves.
+     *
+     * @throws InvalidRequestException
+     */
+    private function assertValidCode(string $code): void
+    {
+        if ($code === '' || trim($code, '.') === '') {
+            throw new InvalidRequestException('A link code must be a non-empty string and not a dot segment.');
+        }
+    }
+
+    /**
+     * Parse the `Retry-After` header — digits-only delta-seconds or the
+     * RFC 7231 HTTP-date form — into non-negative seconds, or null when
+     * absent or unparseable.
      */
     private function parseRetryAfter(string $header): ?int
     {
-        if ($header !== '' && is_numeric($header)) {
+        if ($header === '') {
+            return null;
+        }
+
+        if (ctype_digit($header)) {
             return (int) $header;
+        }
+
+        $date = \DateTimeImmutable::createFromFormat('D, d M Y H:i:s \G\M\T', $header, new \DateTimeZone('UTC'));
+        if ($date !== false) {
+            return max(0, $date->getTimestamp() - time());
         }
 
         return null;

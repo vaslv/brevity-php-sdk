@@ -16,6 +16,12 @@ class CreateLinkRequest
 
     const MAX_RULES = 50;
 
+    /** Minimum click budget accepted by the API. */
+    const MIN_MAX_CLICKS = 1;
+
+    /** Maximum title length accepted by the API, in characters. */
+    const MAX_TITLE_LENGTH = 64;
+
     /** @var string|null */
     private $domain;
 
@@ -25,7 +31,7 @@ class CreateLinkRequest
     /** @var bool|null */
     private $forwardQuery;
 
-    /** @var array|null */
+    /** @var array<string, mixed>|null */
     private $callbackData;
 
     /** @var CreateLinkRule[] */
@@ -52,6 +58,7 @@ class CreateLinkRequest
      * falls back to the default domain). Contradictory combinations are rejected
      * up front with an {@see InvalidRequestException}.
      *
+     * @param  array<string, mixed>|null  $callbackData
      * @param  CreateLinkRule[]  $rules
      * @param  string|null  $domainStrategy  Domain auto-pick strategy: `random` / `round_robin` / `coldest`.
      *                                       Mutually exclusive with $domain; required when $domainGroup is set.
@@ -132,9 +139,9 @@ class CreateLinkRequest
     }
 
     /**
-     * Reject obviously broken activity limits before any HTTP round trip:
-     * an activity window that ends before it starts, or a click budget
-     * below the server minimum of 1.
+     * Reject obviously broken field limits before any HTTP round trip:
+     * an activity window that ends before it starts, a click budget below
+     * the server minimum, or an overlong title.
      *
      * @throws InvalidRequestException
      */
@@ -146,9 +153,16 @@ class CreateLinkRequest
             );
         }
 
-        if ($this->maxClicks !== null && $this->maxClicks < 1) {
+        if ($this->title !== null && preg_match('/^.{0,'.self::MAX_TITLE_LENGTH.'}$/us', $this->title) !== 1) {
+            throw new InvalidRequestException(sprintf(
+                'A title must be valid UTF-8 and must not exceed %d characters.',
+                self::MAX_TITLE_LENGTH
+            ));
+        }
+
+        if ($this->maxClicks !== null && $this->maxClicks < self::MIN_MAX_CLICKS) {
             throw new InvalidRequestException(
-                '`maxClicks` must be at least 1.'
+                sprintf('`maxClicks` must be at least %d.', self::MIN_MAX_CLICKS)
             );
         }
     }
@@ -168,6 +182,9 @@ class CreateLinkRequest
         return $this->forwardQuery;
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     public function getCallbackData(): ?array
     {
         return $this->callbackData;

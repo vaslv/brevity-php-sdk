@@ -21,8 +21,18 @@ class UpdateLinkRequest
     /** @var array<string, mixed> */
     private $payload = [];
 
+    /**
+     * @throws InvalidRequestException An overlong title.
+     */
     public function setTitle(?string $title): self
     {
+        if ($title !== null && preg_match('/^.{0,'.CreateLinkRequest::MAX_TITLE_LENGTH.'}$/us', $title) !== 1) {
+            throw new InvalidRequestException(sprintf(
+                'A title must be valid UTF-8 and must not exceed %d characters.',
+                CreateLinkRequest::MAX_TITLE_LENGTH
+            ));
+        }
+
         $this->payload['title'] = $title;
 
         return $this;
@@ -68,8 +78,10 @@ class UpdateLinkRequest
      */
     public function setMaxClicks(?int $maxClicks): self
     {
-        if ($maxClicks !== null && $maxClicks < 1) {
-            throw new InvalidRequestException('`maxClicks` must be at least 1.');
+        if ($maxClicks !== null && $maxClicks < CreateLinkRequest::MIN_MAX_CLICKS) {
+            throw new InvalidRequestException(
+                sprintf('`maxClicks` must be at least %d.', CreateLinkRequest::MIN_MAX_CLICKS)
+            );
         }
 
         $this->payload['max_clicks'] = $maxClicks;

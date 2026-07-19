@@ -11,6 +11,7 @@ class ValidationException extends ApiException
 
     /**
      * @param  array<string, string[]>  $errors
+     * @param  array<string, mixed>|null  $responseBody
      */
     public function __construct(
         string $message = 'Validation failed.',

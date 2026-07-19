@@ -126,29 +126,15 @@ class CreateLinkRule
      */
     public static function fromArray(array $data): self
     {
-        $conditions = [];
-        if (isset($data['conditions']) && is_array($data['conditions'])) {
-            foreach ($data['conditions'] as $condition) {
-                if (is_array($condition)) {
-                    $conditions[] = CreateLinkCondition::fromArray($condition);
-                }
-            }
-        }
-
-        $variants = [];
-        if (isset($data['variants']) && is_array($data['variants'])) {
-            foreach ($data['variants'] as $variant) {
-                if (is_array($variant)) {
-                    $variants[] = CreateLinkVariant::fromArray($variant);
-                }
-            }
-        }
-
         return new self(
             (string) $data['url'],
-            $conditions,
+            isset($data['conditions']) && is_array($data['conditions'])
+                ? CreateLinkCondition::listFromArray($data['conditions'])
+                : [],
             isset($data['transition_mode']) ? (string) $data['transition_mode'] : null,
-            $variants
+            isset($data['variants']) && is_array($data['variants'])
+                ? CreateLinkVariant::listFromArray($data['variants'])
+                : []
         );
     }
 }
