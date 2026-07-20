@@ -5,11 +5,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: composer
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # The lock only pins the dev toolchain; never touch the constraints
     # consumers resolve against (composer.json stays at the PHP 7.1 floor).
     versioning-strategy: lockfile-only
