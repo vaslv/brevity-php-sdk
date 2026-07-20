@@ -6,6 +6,7 @@ PHP-клиент для API движка коротких ссылок [Brevity]
 
 [![Packagist Version](https://img.shields.io/packagist/v/vaslv/brevity-php-sdk)](https://packagist.org/packages/vaslv/brevity-php-sdk)
 [![CI](https://github.com/vaslv/brevity-php-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/vaslv/brevity-php-sdk/actions/workflows/ci.yml)
+[![Plumb score](https://plumbphp.dev/badges/vaslv/brevity-php-sdk/composite.svg)](https://plumbphp.dev/vaslv/brevity-php-sdk)
 
 ## Возможности
 

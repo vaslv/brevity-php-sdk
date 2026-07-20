@@ -6,6 +6,7 @@ PHP client for the [Brevity](https://github.com/vaslv/brevity) short-link engine
 
 [![Packagist Version](https://img.shields.io/packagist/v/vaslv/brevity-php-sdk)](https://packagist.org/packages/vaslv/brevity-php-sdk)
 [![CI](https://github.com/vaslv/brevity-php-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/vaslv/brevity-php-sdk/actions/workflows/ci.yml)
+[![Plumb score](https://plumbphp.dev/badges/vaslv/brevity-php-sdk/composite.svg)](https://plumbphp.dev/vaslv/brevity-php-sdk)
 
 ## Features
 
